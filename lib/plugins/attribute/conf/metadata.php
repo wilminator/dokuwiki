@@ -7,4 +7,4 @@
  */
 
 $meta['store'] = array('string');
-$meta['compress'] = array('onoff');
+$meta['no_compress'] = array('onoff');

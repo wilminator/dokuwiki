@@ -6,4 +6,4 @@
  */
 
 $conf['store'] = '';
-$conf['compress'] = 0;
+$conf['no_compress'] = 0;
