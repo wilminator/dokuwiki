@@ -395,8 +395,7 @@ class helper_plugin_attribute extends DokuWiki_Plugin {
             $result = false;
         }
 
-        $lock = $namespace . '.' . $user;
-        io_lock($lock);
+        io_unlock($lock);
 
         return $result;
     }
