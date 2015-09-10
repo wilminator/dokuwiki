@@ -20,9 +20,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 	public function __construct() {
 		$this->loadConfig();
 		// Load the attribute helper if GA is active or not requiring use of email to send the OTP.
-		$requireAttribute = $this->getConf("enable") === 1 && 
-			($this->getConf("usega") === 1 || 
-			($this->getConf("useotp") === 1 && ($this->getConf("otpmethod") != 'email' || $this->getConf("optinout") != 'mandatory')));
+		$requireAttribute = $this->getConf("enable") === 1;
 		$this->attribute = $requireAttribute ? $this->loadHelper('attribute', 'Attribute plugin required!') : null;		
 		$this->success = !$requireAttribute || ($this->attribute && $this->attribute->success);
 
