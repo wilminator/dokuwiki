@@ -56,6 +56,8 @@
 !/lib/plugins/index.html
 !/lib/plugins/remote.php
 !/lib/plugins/syntax.php
+!/lib/plugins/attribute
+!/lib/plugins/twofactor
 lib/images/*/local/*
 
 # composer default ignores
