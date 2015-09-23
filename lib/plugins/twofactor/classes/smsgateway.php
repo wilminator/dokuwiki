@@ -78,7 +78,7 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 				msg("TwoFactor: Error setting phone.", -1);
 			}
 			// Delete the verification for the phone number if it was changed.
-			$this->attribute->del("twofactor", "seensms");
+			unset $this->settings['verified'];
 			$changed = true;
 		}
 		
@@ -89,7 +89,7 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 				msg("TwoFactor: Error setting provider.", -1);
 			}
 			// Delete the verification for the phone number if the carrier was changed.
-			$this->attribute->del("twofactor", "seensms");
+			unset $this->settings['verified'];
 			$changed = true;
 		}
 

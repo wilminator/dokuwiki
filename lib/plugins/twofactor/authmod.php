@@ -93,4 +93,13 @@ abstract class Twofactor_Auth_Module {
 	protected function getConf($key) {
 		return $this->twofactor->getConf($key);
 	}
+
+	/**
+	 * This is a helper function to get text strings from the twofactor class 
+	 * calling this module.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function getSharedSetting($key) {
+		return $this->twofactor->attribute->get("twofactor", $key);
+	}
 }
