@@ -29,10 +29,8 @@ if (!defined('DOKU_INC')) die();
  * transmit option. These options are handled by the parent module.
  */
 
-// Load the PHPGangsta_GoogleAuthenticator Class
-require_once(dirname(__FILE__).'/GoogleAuthenticator.php');
-// Load the PHP QR Code library.
-require_once(dirname(__FILE__).'/phpqrcode.php');
+// Load the authmod class. This will facilitate loading in child modules.
+require_once(dirname(__FILE__).'/authmod.php');
 
 class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 	public $success = false;
@@ -43,8 +41,24 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		// Load the attribute helper if GA is active or not requiring use of email to send the OTP.
 		$requireAttribute = $this->getConf("enable") === 1;
 		$this->attribute = $requireAttribute ? $this->loadHelper('attribute', 'Attribute plugin required!') : null;		
-		$this->success = !$requireAttribute || ($this->attribute && $this->attribute->success);
+		
+		// Now figure out what modules to load and load them.				
+		$available = Twofactor_Auth_Module::listModules();
+		$desired = explode(',', $this->getConf('modules'));
+		$unavailable = array_diff($desired, $available);
+		if (count($unavailable) > 0) {
+			msg('At least one requested module is not present.' . ' ' . implode(', ', $unavailable), -1);
+		}
+		$loading = array_intersect($available, $desired);
+		$this->modules = Twofactor_Auth_Module::loadModules($loading);
+		$failed = array_diff($loading, array_keys($this->modules));
+		if (count($failed) > 0) {
+			msg('At least one loaded module did not have a properly named class.' . ' ' . implode(', ', $failed), -1);
+		}
 
+		// Sanity check.
+		$this->success = (!$requireAttribute || ($this->attribute && $this->attribute->success)) && count($this->modules) > 0);
+		
 		// This is a check flag to verify that the user's profile is being updated.
 		$this->modifyProfile = false;
 	}
@@ -58,7 +72,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
             'email'  => 'mwilmes@avc.edu',
             'date'   => '2015-09-04',
             'name'   => 'TwoFactor Plugin',
-            'desc'   => 'This plugin provides for two factor authentication using either Google Authenticator or one time passwords sent by email or SMS appliance.',
+            'desc'   => 'This plugin provides for two factor authentication using extensible modules.',
             'url'    => 'http://www.dokuwiki.org/plugin:twofactor',
 		);
 	}
@@ -69,7 +83,11 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
     function register(&$controller)
     {
         if($this->getConf("enable") === 1 && $this->success) {
-			if ($this->getConf("usega") === 1) {
+			$firstlogin = false;
+			foreach ($this->modules as $mod) {
+				$firstlogin |= $mod->canAuthLogin();
+			}
+			if ($firstlogin) {
 				$controller->register_hook('HTML_LOGINFORM_OUTPUT', 'BEFORE', $this, 'twofactor_login_form', array());				
 			}
 			$controller->register_hook('AUTH_LOGIN_CHECK', 'BEFORE', $this, 'twofactor_before_auth_check', array());
@@ -80,33 +98,35 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
             $controller->register_hook('AUTH_USER_CHANGE', 'AFTER', $this, 'twofactor_process_changes', array());
         }
     }
+
     /**
      * Handles the login form rendering.
      */
     function twofactor_login_form(&$event, $param) {
 		$twofa_form = form_makeTextField('otp', '', $this->getLang('twofactor_login'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
         $pos = $event->data->findElementByAttribute('type', 'submit');
-        $event->data->insertElement($pos-1, $twofa_form);
+        $event->data->replaceElement($pos-1, $twofa_form);
     }
+
     /**
      * Handles the profile form rendering.  Displays user manageable settings.
      */
     function twofactor_profile_form(&$event, $param) {
 		$optinout = $this->getConf("optinout");
 		$optstate = $optinout == 'mandatory' ? 'in' : ($this->attribute ? $this->attribute->get("twofactor","state") : '');
-		$gaavailable = $this->getConf("usega") === 1 && $this->attribute->exists("twofactor","seenqrcode");
-		$otpmethod = $this->getConf("otpmethod");
-		$otpenabled = $this->getConf("useotp") === 1;
-		$otpavailable = $otpenabled && ($otpmethod === 'email' || $this->attribute->exists("twofactor","seensms"));
+		$available = false;
+		foreach ($this->modules as $mod) {
+			$available |= $mod->canUse();
+		}
 		
 		// If the user is being redirected here because of mandatory two factor, then display a message saying so.
-		if (!$gaavailable && !$otpavailable && $optinout == 'mandatory') {
+		if (!$available && $optinout == 'mandatory') {
 			msg($this->getLang('twofactor_mandatory'), -1);
 		}
 
 		global $USERINFO;
 		// Get the location just above the submit buttons.
-		$pos = $event->data->findElementByAttribute('type', 'submit') - 1;
+		$pos = $event->data->findElementByAttribute('type', 'submit') - 1;		
 		// Add the checkbox to opt in and out, only if optinout is not mandatory.
 		if ($this->getConf("optinout") != 'mandatory') {
 			$value = $optstate;
@@ -116,86 +136,18 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$twofa_form = form_makeCheckboxField('optinout', '1', $this->getLang('twofactor_optin'), '', 'block', $value=='in'?array('checked'=>'checked'):array());
 			$event->data->insertElement($pos++, $twofa_form);
 		}
-		// Add the image and prompt to use GA if available, or the check to undo personal GA if in use.
-		if ($optstate == 'in' && $this->getConf("usega") == 1) {			
-			$ga = new PHPGangsta_GoogleAuthenticator();			
-			if ($this->attribute->exists("twofactor","secret")) { // The user has a revokable GA secret.
-				// Show the QR code so the user can add other devices.
-				$mysecret = $this->attribute->get("twofactor","secret");
-				$event->data->insertElement($pos++, '<figure><figcaption>'.$this->getLang('twofactor_scanwithga').'</figcaption>');
-				$data = $this->twofactor_generateQRCodeData($USERINFO['mail'], $mysecret);			
-				$event->data->insertElement($pos++, '<img src="'.$data.'" alt="'.$this->getLang('twofactor_scanwithga').'" />');
-				$event->data->insertElement($pos++, '</figure>');
-				// Check to see if the user needs to verify the code.
-				if (!$this->attribute->exists("twofactor","seenqrcode")){
-					$event->data->insertElement($pos++, '<span>'.$this->getLang('twofactor_verifyga').'</span>');
-					$twofa_form = form_makeTextField('verifyga', '', $this->getLang('twofactor_codefromga'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-					$event->data->insertElement($pos++, $twofa_form);
-				}
-				// Show the option to revoke the GA secret.
-				$twofa_form = form_makeCheckboxField('killgasecret', '1', $this->getLang('twofactor_killgasecret'), '', 'block');
-				$event->data->insertElement($pos++, $twofa_form);
-			}
-			else { // The user may opt in using GA.
-				$secret = $this->twofactor_getSecret();
-				if ($secret != '') { // A system-wide secret exists					
-					$event->data->insertElement($pos++, '<figure><figcaption>'.$this->getLang('twofactor_scanwithga').'</figcaption>');
-					$data = $this->twofactor_generateQRCodeData($USERINFO['mail'], $secret);			
-					$event->data->insertElement($pos++, '<img src="'.$data.'" alt="'.$this->getLang('twofactor_scanwithga').'" />');
-					$event->data->insertElement($pos++, '</figure>');
-					if (!$this->attribute->exists("twofactor","seenqrcode")){
-						$event->data->insertElement($pos++, '<span>'.$this->getLang('twofactor_verifyga').'</span>');
-						$twofa_form = form_makeTextField('verifyga', '', $this->getLang('twofactor_codefromga'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-						$event->data->insertElement($pos++, $twofa_form);
-					}
-					else {
-						$event->data->insertElement($pos++, $this->getLang('twofactor_gaready'));
-					}
-				}
-				else { // The user can generate a personal secret; no system secret exists.
-					//Provide a checkbox to create a personal secret.
-					$twofa_form = form_makeCheckboxField('makegasecret', '1', $this->getLang('twofactor_makegasecret'), '', 'block');
-					$event->data->insertElement($pos++, $twofa_form);
-				}
-			}
 
-		}
-		// Verify phone number if used.
-		if ($optstate == 'in' && $this->getConf("useotp") === 1 && $this->getConf("otpmethod") != 'email') {
-			// Provide an input for the phone number.
-			$twofa_form = form_makeTextField('phone', $this->attribute->get("twofactor","phone"), $this->getLang('twofactor_phone'), '', 'block', array('size'=>'50'));
-			$event->data->insertElement($pos++, $twofa_form);
-			// If using an SMS email gateway, ask for the cellphone provider.
-			if ($this->getConf("otpmethod") == 'smsgateway') {
-				$provider = $this->attribute->get("twofactor","provider");
-				$providers = array_keys($this->twofactor_getProviders());
-				$twofa_form = form_makeListboxField('provider', $providers, $provider, $this->getLang('twofactor_provider'), '', 'block');
-				$event->data->insertElement($pos++, $twofa_form);
+		// TODO: Make this AJAX so that the user does not have to keep clicking 
+		// submit them Update Profile!
+		//Loop through all modules and render the profile components.
+		if ($optstate == 'in') {			
+			$parts = array();
+			foreach ($this->modules as $mod){
+				$parts = array_merge($mod->renderProfileForm(), $parts);
 			}
-
-			// If the phone number has not been verified, then do so here.
-			if ($this->attribute->exists("twofactor","phone") && !$this->attribute->exists("twofactor","seensms")) {
-				// Get the existing OTP if present.
-				$otppresent = $this->attribute->exists("twofactor","otp");
-				if ($otppresent) {
-					list($myotp, $expires) = $this->attribute->get("twofactor","otp");
-				}
-				// If there is no OTP or it has expired, resend it.
-				if (!$otppresent || time() > $expires) {
-					$this->twofactor_send_otp();
-				}
-				// Render the HTML to prompt for the verification/activation OTP.
-				$event->data->insertElement($pos++, '<span>'.$this->getLang('twofactor_smsnotice').'</span>');
-				$twofa_form = form_makeTextField('verifysms', '', $this->getLang('twofactor_otplogin'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-				$event->data->insertElement($pos++, $twofa_form);
-				$event->data->insertElement($pos++, form_makeCheckboxField('resend', '1', $this->getLang('btn_resend'),'','block'));
+			foreach($parts as $part) {
+				$event->data->insertElement($pos++, $part);
 			}
-			
-			if ($this->attribute->exists("twofactor","phone")) {
-				$twofa_form = form_makeCheckboxField('killsms', '1', $this->getLang('twofactor_killsms'), '', 'block');
-				$event->data->insertElement($pos++, $twofa_form);
-			}
-
 		}
     }
 
@@ -273,113 +225,29 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					$changed = true;
 				}
 			}
-			// Update GA settings.
-			if ($this->getConf("usega") == 1) {
-				$ga = new PHPGangsta_GoogleAuthenticator();
-				$oldmysecret = $this->attribute->get("twofactor","secret", $success);
-				if ($INPUT->bool('killgasecret', false)) {
-					$this->attribute->del("twofactor","secret");
-					// Also delete the seenqrcode attribute.  Otherwise the system will still expect the user to login with GA.
-					$this->attribute->del("twofactor","seenqrcode");
-					$changed = true;
-				}
-				if ($INPUT->bool('makegasecret', false) && $success == false) { // Only make a code if one is not set.
-					$mysecret = $ga->createSecret();
-					if ($this->attribute->set("twofactor","secret", $mysecret)== false) {
-						msg("TwoFactor: Error setting secret.", -1);
-					}
-					$changed = true;
-				}
-				$otp = $INPUT->str('verifyga', '');
-				if ($otp) { // The user will use GA.
-					$expiry = $this->getConf("gaexpiry");
-					$secret = $this->twofactor_getSecret(); // We only get here if there will not be a user secret.
-					$checkResult = $ga->verifyCode($secret, $otp, $expiry);
-					// If the code works, then flag this account to use GA.
-					if ($checkResult == false) {
-						msg($this->getLang('twofactor_failedgasetup'), -1);
-					}
-					else {
-						if ($this->attribute->set("twofactor","seenqrcode", true)== false) {
-							msg("TwoFactor: Error setting seenqrcode.", -1);
-						}
-						else {
-							msg($this->getLang('twofactor_passedgasetup'), 1);
-							// If the user was not granted clearance before, do that now and redirect to 'show'.
-							if (!$this->twofactor_getClearance()) {
-								$this->twofactor_grantClearance();
-								global $ACT;
-								$ACT = 'show';
-							}
-							$changed = true;
-						}
-					}					
+			// Update module settings.
+			$sendotp = null;
+			foreach ($this->modules as $name=>$mod){
+				$result = $mod->processProfileForm();
+				$changed |= $result !== false && $result !== 'failed';
+				switch($changed) {
+					case 'verified':
+						// Remove used OTP.
+						$this->attribute->del("twofactor","otp");
+						msg($this->getLang('twofactor_passedsetup') . ' ' . $name, 1);
+						break;
+					case 'failed':
+						msg($this->getLang('twofactor_failedsetup') . ' ' . $name, -1);
+						break;
+					case 'otp':
+						if (!$sendotp) {
+							$sendotp = $mod;
+						}						
 				}
 			}
-			//Update OTP settings.
-			if ($this->getConf("useotp") == 1) {
-				$oldphone = $this->attribute->get("twofactor","phone", $success);
-				$phone = $INPUT->str('phone', '');
-				if ($phone != $oldphone) {
-					if ($this->attribute->set("twofactor","phone", $phone)== false) {
-						msg("TwoFactor: Error setting phone.", -1);
-					}
-					// Delete the verification for the phone number if it was changed.
-					$this->attribute->del("twofactor", "seensms");
-					$changed = true;
-				}
-				
-				$oldprovider = $this->attribute->get("twofactor","provider", $success);
-				$provider = $INPUT->str('provider', '');
-				if ($this->getConf("otpmethod") == 'smsgateway' && $this->attribute->exists("twofactor","phone") &&$provider != $oldprovider) {
-					if ($this->attribute->set("twofactor","provider", $provider)== false) {
-						msg("TwoFactor: Error setting provider.", -1);
-					}
-					// Delete the verification for the phone number if the carrier was changed.
-					$this->attribute->del("twofactor", "seensms");
-					$changed = true;
-				}
-
-				if ($INPUT->bool('killsms', false)) {
-					$this->attribute->del("twofactor","phone");
-					$this->attribute->del("twofactor","provider");
-					// Also delete the seensms attribute.  Otherwise the system will still expect the user to login with OTP.
-					$this->attribute->del("twofactor","seensms");
-					$changed = true;
-				}
-
-				$otp = $INPUT->str('verifysms', '');
-				if ($otp) { // The user will use SMS.
-					$otppresent = $this->attribute->exists("twofactor","otp");
-					if ($otppresent) {
-						list($myotp, $expires) = $this->attribute->get("twofactor","otp");
-					}					
-					if ($otp !== $myotp || time() > $expires) {
-						msg($this->getLang('twofactor_failedsmssetup'), -1);
-					}
-					else {
-						// The user's ability to process OTP has been confirmed.
-						if ($this->attribute->set("twofactor","seensms", true)== false) {
-							msg("TwoFactor: Error setting seensms.", -1);
-						}
-						else {
-							msg($this->getLang('twofactor_passedsmssetup'), 1);
-							// Remove used OTP.
-							$this->attribute->del("twofactor","otp");
-							// If the user was not granted clearance before, do that now and redirect to 'show'.
-							if (!$this->twofactor_getClearance()) {
-								$this->twofactor_grantClearance();
-								global $ACT;
-								$ACT = 'show';
-							}
-							$changed = true;
-						}
-					}
-				}				
-
-				if ($INPUT->bool('resend', false)) {
-					$this->twofactor_send_otp();
-				}
+			// Send OTP if requested.
+			if ($sendotp) {
+				$this->twofactor_send_otp($sendotp);
 			}
 
 			// Update change status if changed.
@@ -610,12 +478,22 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
     }
 
     /**
-     * Transmits a One-Time Password (OTP) using the wiki-configured method.
-     * This may be to the user's email address, sending an email to the user's
-     * configured email to SMS gateway, or via a SMS appliance.
-     * @return bool - Success of transmission.
+     * Transmits a One-Time Password (OTP) configured modules.
+     * If $module is set to a specific instance, that instance will be used to 
+	 * send the OTP. If not supplied or null, then all configured modules will 
+	 * be used to send the OTP. $module can allso be an array of selected 
+	 * modules.
+     * @return mixed - true if successfull to all attempted tramsmission 
+	 *     modules, false if all failed, and a number of how many successes 
+	 *     if only some modules failed.
      */
-    function twofactor_send_otp() {
+    function twofactor_send_otp($module = null) {
+		if ($module === null) {
+			$module = array_filter($this->modules, function ($x){return $x->canUse()});
+		}
+		if (!is_array($module)) {
+			$module = array($module);
+		}		
 		// Generate the OTP code.
 		$characters = '0123456789';
 		$otp = '';
@@ -625,117 +503,17 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		// Create the message.
 		$message = str_replace('$otp', $otp, $this->getConf('otpcontent'));
 		// Pick the delivery method.
-		$otpmethod = $this->getConf("otpmethod");
-		if ($otpmethod == 'smsappliance') { // If we are using an SMS appliance
-			$number = $this->attribute->get("twofactor","phone", $success);
-			if (!$success) {
-				// If there is no phone number, then fail.
-				return false;
-			}
-			$url = str_replace('$phone', $number, $this->getConf('otpurl'));
-			$url = str_replace('$msg', rawurlencode($message), $url);
-			// Deliver the message and capture the results.
-			$result = file_get_contents($url);
-			// TODO: How do we verify success?
-		}
-		else { //If we are not using an appliance
-			// Import conf to manage html emails and get the wiki name.
-			global $conf;
-		if ($otpmethod == 'email') { // Send to this user's email address
-				global $USERINFO;
-				$to = $USERINFO['mail'];
-			}
-			else { // Send to this user's phone
-				// Disable HTML for text messages.				
-				$conf['htmlmail'] = 0;			
-				$number = $this->attribute->get("twofactor","phone");
-				if (!$number) {
-					msg("TwoFactor: User has not defined a phone number.  Failing.", -1);
-					// If there is no phone number, then fail.
-					return false;
-				}
-				$gateway = $this->attribute->get("twofactor","provider");
-				$providers = $this->twofactor_getProviders();
-				if (array_key_exists($gateway, $providers)) {
-					$to = "{$number}@{$providers[$gateway]}";
-				}
-				else {
-					$to = '';
-				}
-			}
-			if (!$to) {
-				msg("TwoFactor: Unable to define To field for email.  Failing.", -1);
-				// If there is no recipient address, then fail.
-				return false;
-			}
-			// Create the email object.
-			$mail = new Mailer();
-			$subject = $conf['title'].' login verification';
-			$mail->to($to);
-			$mail->subject($subject);
-			$mail->setText($message);			
-			$result = $mail->send();
-		}
-		// Store the OTP code and the timestamp the OTP expires at.
-		$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('otpexpiry') * 60));
-		return true;
-	}
-
-    /**
-     * Provide the Google Authenticator secret to use for this user. If set
-     * globally, that will override any per-user secret.  If not set globally
-     * or per-user, returns the empty string.
-     * @param string $user
-     * @return string
-     */
-    function twofactor_getSecret($user = null) {
-		$secret = $this->getConf("gasecret");
-		if ($secret == '') {
-			$secret = $this->attribute->get("twofactor","secret", $success, $user);
-			if (!$success) {
-				$secret == '';
+		$success = 0;
+		foreach($module as $mod) {
+			if ($mod->canTransmitMessage()) {
+				$success += $mod->transmitMessage($message) ? 1 : 0;
 			}
 		}
-		return $secret;
-	}
-
-    /**
-     * Produce an array of SMS gateway email domains with the keys as the
-     * cellular providers.  Reads the gateway.txt file to generate the list.
-     * @return array - keys are providers, values are the email domains used
-     *      to email an SMS to a phone user.
-     */
-    function twofactor_getProviders() {
-		$filename = dirname(__FILE__).'/gateway.txt';
-		$providers = array();
-		$contents = explode("\n", io_readFile($filename));		
-		foreach($contents as $line) {
-			if (strstr($line, '@')) {
-				list($provider, $domain) = explode("@", trim($line), 2);
-				$providers[$provider] = $domain;
-			}
+		
+		// If partially successful, store the OTP code and the timestamp the OTP expires at.
+		if ($success > 0) {
+			$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('otpexpiry') * 60));
 		}
-		return $providers;
-	}
-
-    /**
-     * Generates the QR Code used by Google Authenticator and produces a data
-     * URI for direct insertion into the HTML source.
-     * @param $name - The email address fo the user
-     * @param $secret - The secret hash used to seed the otp formula
-     * @return string - a complete data URI to be placed in an img tag's src
-     *      attribute.
-     */
-    function twofactor_generateQRCodeData($name, $secret) {
-		$url = 'otpauth://totp/'.$name.'?secret='.$secret;
-		// Capture PNG image for embedding into HTML.
-		ob_start();
-		// NOTE: the @ is required to supress output errors when trying to get 
-		// the PNG data from the output buffer.
-		@QRcode::png($url);
-		$image_data = ob_get_contents();
-		ob_end_clean();			
-		// Convert to data URI.
-		return "data:image/png;base64," . base64_encode($image_data);
+		return $success == 0 ? false : ($success == count($mod) ? true : $success);
 	}
 }

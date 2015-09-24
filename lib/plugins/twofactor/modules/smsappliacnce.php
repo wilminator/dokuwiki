@@ -1,5 +1,5 @@
 <?php
-class auth_module_smsgateway extends Twofactor_Auth_Module {
+class auth_module_smsappliance extends Twofactor_Auth_Module {
 	/** 
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
@@ -21,10 +21,10 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 		$elements = array();
 			// Provide an input for the phone number.			
 			$phone = array_key_exists('phone', $this->settings) ? $this->settings['phone'] : '';
-			$elements[] = form_makeTextField('smsgateway_phone', $phone, $this->getLang('phone'), '', 'block', array('size'=>'50'));
-			$providers = array_keys($this->smsgateway_getProviders());
+			$elements['phone'] = form_makeTextField('phone', $phone, $this->getLang('phone'), '', 'block', array('size'=>'50'));
+			$providers = array_keys($this->smsappliance_getProviders());
 			$provider = array_key_exists('provider', $this->settings) ? $this->settings['provider'] : $providers[0];
-			$twofa_form = form_makeListboxField('smsgateway_provider', $providers, $provider, $this->getLang('provider'), '', 'block');
+			$twofa_form = form_makeListboxField('smsappliance_provider', $providers, $provider, $this->getLang('provider'), '', 'block');
 			$elements[] = $twofa_form;
 
 			// If the phone number has not been verified, then do so here.
@@ -32,11 +32,11 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 				if (!array_key_exists('verified', $this->settings)) {
 					// Render the HTML to prompt for the verification/activation OTP.
 					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
-					$elements[] = form_makeTextField('smsgateway_verify', '', $this->getLang('verify'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-					$elements[] = form_makeCheckboxField('smsgateway_send', '1', $this->getLang('resend'),'','block');
+					$elements[] = form_makeTextField('smsappliance_verify', '', $this->getLang('verify'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
+					$elements[] = form_makeCheckboxField('smsappliance_send', '1', $this->getLang('resend'),'','block');
 				}
 				// Render the element to remove the phone since it exists.
-				$elements[] = form_makeCheckboxField('smsgateway_disable', '1', $this->getLang('disable'), '', 'block');
+				$elements[] = form_makeCheckboxField('smsappliance_disable', '1', $this->getLang('disable'), '', 'block');
 			}			
 		return $elements;
 	}
@@ -45,7 +45,7 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 	 * Process any user configuration.
 	 */	
     public function processProfileForm(){
-		if ($INPUT->bool('smsgateway_disable', false)) {
+		if ($INPUT->bool('smsappliance_disable', false)) {
 			unset $this->settings["phone"];
 			unset $this->settings["provider"];
 			// Also delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
@@ -53,10 +53,10 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 			return true;
 		}
 		if (!$this->canUse()) {
-			if ($INPUT->bool('smsgateway_send', false)) {
+			if ($INPUT->bool('smsappliance_send', false)) {
 				return 'otp';
 			}
-			$otp = $INPUT->str('smsgateway_verify', '');
+			$otp = $INPUT->str('smsappliance_verify', '');
 			if ($otp) { // The user will use SMS.
 				$checkResult = $this->processLogin($otp);
 				// If the code works, then flag this account to use SMS Gateway.
@@ -72,7 +72,7 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 		
 		$changed = null;
 		$oldphone = array_key_exists('phone', $this->settings) ? $this->settings['phone'] : '';
-		$phone = $INPUT->str('smsgateway_phone', '');
+		$phone = $INPUT->str('smsappliance_phone', '');
 		if ($phone != $oldphone) {
 			if ($this->attribute->set("twofactor","phone", $phone)== false) {
 				msg("TwoFactor: Error setting phone.", -1);
@@ -82,17 +82,6 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 			$changed = true;
 		}
 		
-		$oldprovider = $this->attribute->get("twofactor","provider", $success);
-		$provider = $INPUT->str('smsgateway_provider', '');
-		if ($this->getConf("otpmethod") == 'smsgateway' && $this->attribute->exists("twofactor","phone") &&$provider != $oldprovider) {
-			if ($this->attribute->set("twofactor","provider", $provider)== false) {
-				msg("TwoFactor: Error setting provider.", -1);
-			}
-			// Delete the verification for the phone number if the carrier was changed.
-			unset $this->settings['verified'];
-			$changed = true;
-		}
-
 		return $changed;
 	}	
 	
@@ -109,38 +98,16 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 	 */
 	public function transmitMessage($message){
 		if (!$this->canUse()) { return false; }
-		global $USERINFO, $conf;
-		// Disable HTML for text messages.				
-		$conf['htmlmail'] = 0;			
-		$number = $this->settings["phone"];
-		if (!$number) {
-			msg("TwoFactor: User has not defined a phone number.  Failing.", -1);
+		$number = $this->attribute->get("twofactor","phone", $success);
+		if (!$success) {
 			// If there is no phone number, then fail.
 			return false;
 		}
-		$gateway = $this->settings["provider"];
-		$providers = $this->twofactor_getProviders();
-		if (array_key_exists($gateway, $providers)) {
-			$to = "{$number}@{$providers[$gateway]}";
-		}
-		else {
-			$to = '';
-		}
-		if (!$to) {
-			msg("TwoFactor: Unable to define To field for email.  Failing.", -1);
-			// If there is no recipient address, then fail.
-			return false;
-		}
-		// Create the email object.
-		$mail = new Mailer();
-		$subject = $conf['title'].' login verification';
-		$mail->to($to);
-		$mail->subject($subject);
-		$mail->setText($message);			
-		$result = $mail->send();
-		// This is here only for debugging for me for now.  My windows box can't send out emails :P
-		msg($message, 0);
-		return $result;
+		$url = str_replace('$phone', $number, $this->getConf('otpurl'));
+		$url = str_replace('$msg', rawurlencode($message), $url);
+		// Deliver the message and capture the results.
+		$result = file_get_contents($url);
+		// TODO: How do we verify success?
 		}
 	
 	/**

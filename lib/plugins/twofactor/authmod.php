@@ -1,4 +1,6 @@
 <?php
+define ('AUTHMOD_MODULES', dirname(__FILE__).'/modules');
+
 abstract class Twofactor_Auth_Module {
 	protected $twofactor = null;
 	protected $settings = null;
@@ -32,6 +34,8 @@ abstract class Twofactor_Auth_Module {
 	/**
 	 * This is called to render the user configurable portion of the module 
 	 * inside the user's profile.  Default is to render nothing.
+	 * NOTE: Use string indexes for fields that can be consolidated, eg phone 
+	 *       numbers.
 	 * @return array - Array of HTML form elements to insert into the profile 
 	 *     page.
 	 */
@@ -101,5 +105,35 @@ abstract class Twofactor_Auth_Module {
 	 */
 	protected function getSharedSetting($key) {
 		return $this->twofactor->attribute->get("twofactor", $key);
+	}
+	
+	/**
+	 * This is a helper function that lists the names of all available 
+	 * modules. 	 
+	 * @return array - Names of availble modules.
+	 */
+	static public function listModules(){
+		return array_filter(scandir(AUTHMOD_MODULES), function($x){ return substr($x, -4)==='.php';});
+	}
+
+	/**
+	 * This is a helper function that attempts to load the named modules.
+	 * @return array - An array of instanced objects from the loaded modules.
+	 */
+	static public function loadModules($mods){
+		$objects = array();
+		foreach ($mods as $mod) {
+			$filename = AUTHMOD_MODULES . "/{$mods}.php";
+			if (ctype_alnum($mod) && is_file($filename)){
+				$obj_name = "auth_module_$mod";
+				include_once $filename;		
+				$obj = null;
+				$obj = @new $obj_name;
+				if ($obj && is_a($obj, 'Twofactor_Auth_Module')) {
+					$objects[$mod] = $obj;
+				}
+			}
+		}
+		return $objects;
 	}
 }

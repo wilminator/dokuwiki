@@ -113,4 +113,25 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
 		$secret = $this->settings['secret'];
 		return $ga->verifyCode($this->settings['secret'], $code, $expiry);
 	}
+
+    /**
+     * Generates the QR Code used by Google Authenticator and produces a data
+     * URI for direct insertion into the HTML source.
+     * @param $name - The email address fo the user
+     * @param $secret - The secret hash used to seed the otp formula
+     * @return string - a complete data URI to be placed in an img tag's src
+     *      attribute.
+     */
+    private function generateQRCodeData($name, $secret) {
+		$url = 'otpauth://totp/'.$name.'?secret='.$secret;
+		// Capture PNG image for embedding into HTML.
+		ob_start();
+		// NOTE: the @ is required to supress output errors when trying to get 
+		// the PNG data from the output buffer.
+		@QRcode::png($url);
+		$image_data = ob_get_contents();
+		ob_end_clean();			
+		// Convert to data URI.
+		return "data:image/png;base64," . base64_encode($image_data);
+	}
 }

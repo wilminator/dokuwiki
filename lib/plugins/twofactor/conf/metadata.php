@@ -1,6 +1,7 @@
 <?php
 $meta["enable"] = array('onoff');
 $meta["optinout"] = array('multichoice','_choices' => array('optin','optout','mandatory'));
+$meta["modules"] = array('string');
 $meta["usega"] = array('onoff');
 $meta["gasecret"] = array('string');
 $meta["gaexpiry"] = array('numeric');
