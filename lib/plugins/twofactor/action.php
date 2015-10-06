@@ -280,38 +280,35 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$this->twofactor_logout();
 		}
 
-		// If the user still has clearance, then we can skip this.
-		$twofactor = $this->twofactor_getClearance();		
-		if ($twofactor) { return; }
+		// If the user still has clearance, then we can skip this.		
+		if ($this->twofactor_getClearance()) { return; }
 		
-		// GA is available if two factor is enabled, ga is enabled, and the user has verified that GA is setup on their device.
-		$gaavailable = $this->getConf("usega") === 1 && $this->attribute->exists("twofactor","seenqrcode", $user) === true;
-		$otpmethod = $this->getConf("otpmethod");
-		$otpenabled = $this->getConf("useotp") === 1;
-		$otpavailable = $otpenabled && ($otpmethod === 'email' || $this->attribute->exists("twofactor","seensms", $user));
-		if ($user != '' && $gaavailable){ // GA two factor not completed, but available.
-			global $INPUT;
+		$workingMods = array_filter($this->modules, function ($mod) { return $mod->canAuthLogin(); });
+		if (count($workingMods) > 0 && $user) {  
 			$otp = $INPUT->str('otp');
-			if ($otp) {  // A GA OTP was supplied.
-                $ga = new PHPGangsta_GoogleAuthenticator();
-				$expiry = $this->getConf("gaexpiry");
-				$secret = $this->twofactor_getSecret($user);
-                $checkResult = $ga->verifyCode($secret, $otp, $expiry);
-				// If the code fails, then revoke the login.
-				if ($checkResult == false) {
-					global $lang;
-					msg($lang['badlogin'], -1);
-					$event->preventDefault();
-					return;
+			$result = false;
+			if ($otp) {
+				// Check for any modules that support OTP at login and are ready for use.
+				foreach ($this->modules as $name=>$mod){
+					if ($mod->canAuthLogin() && $mod->canUse()) {
+						$result |= $mod->processLogin($otp);
+						if ($result) { 
+							// The OTP code was valid.
+							$this->twofactor_grantClearance();
+							return;					
+						}
+					}
 				}
-				// The OTP code was valid.
-				$this->twofactor_grantClearance();
+				global $lang;
+				msg($lang['badlogin'], -1);
+				$event->preventDefault();
 				return;
 			}
 			else { // No GA OTP was supplied.
 				// If the user has an alternative two factor configured, then allow it to be used.
 				// Otherwise fail.				
-				if (!$otpavailable) {
+				$useableMods = array_filter($this->modules, function ($mod) { return !$mod->canAuthLogin() && $mod->canUse(); });
+				if (count($useableMods) == 0) {
 					// There is no other two factor option, and this user did not supply a GA OTP code.
 					// Revoke the logon.
 					msg($this->getLang('twofactor_mustusega'), -1);
@@ -319,12 +316,11 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					return;
 				}
 			}					
-		}		 
+		}
 		
-		// Check to see if the user has not configured two factor authentication yet.
-		// If there is no seenqrcode attribute, then the user has not had a chance to configure GA.
-		// If there is no phone attribute and the otpmode is not email, then the user has not configured otp.
-		if (!$gaavailable && !$otpavailable) {
+		// Check to see if the user has configured any module for use.
+		$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
+		if (count($useableMods) == 0) {
 			// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
 			if ($this->getConf("optinout") != 'mandatory') {
 				//There is no two factor configured for this user and it is not mandatory. Give clearance.
@@ -332,8 +328,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			}	
 			// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 			$ACT = 'profile';
-		}
-		
+		}		
     }
 
     /**
@@ -354,10 +349,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 
 		$optinout = $this->getConf("optinout");
 		$optstate = $this->attribute ? $this->attribute->get("twofactor","state") : '';
-		$gaavailable = $this->getConf("usega") === 1 && $this->attribute->exists("twofactor","seenqrcode");
-		$otpmethod = $this->getConf("otpmethod");
-		$otpenabled = $this->getConf("useotp") === 1;
-		$otpavailable = $otpenabled && ($otpmethod === 'email' || $this->attribute->exists("twofactor","seensms"));
 		$enable = $this->getConf("enable") && // The module is enabled AND...
 			((!$optinout === 'optin' || $optstate === 'in') // Opt-in is off OR the user has opted in
 			|| // OR...
@@ -365,17 +356,18 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			|| // OR...
 			$optinout === 'mandatory'); // User must participate.
 		if ($enable) {
-			
-			// Check to see if the user has not configured two factor authentication yet.
-			// If there is no seenqrcode attribute, then the user has not had a chance to configure GA.
-			// If there is no phone attribute and the otpmode is not email, then the user has not configured otp.	
-			
-			if (!$gaavailable && !$otpavailable && $ACT != 'logout') {
-				// Two factor is mandatory, but not set up.
-				// Redirect to the profile page.	
+			// Check to see if the user has configured any module for use.
+			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
+			if (count($useableMods) == 0) {
+				// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
+				if ($this->getConf("optinout") != 'mandatory') {
+					//There is no two factor configured for this user and it is not mandatory. Give clearance.
+					$this->twofactor_grantClearance();
+				}	
+				// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 				$ACT = 'profile';
 				return;
-			}
+			}		
 			
 			// See if the user is quitting OTP.  We don't call it logoff because we don't want the user to think they are logged in!
 			// This has to be checked before the template is started.
@@ -408,8 +400,14 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			
 			// Check if the user asked to generate and resend the OTP.
 			if ($INPUT->has('resend')) {
+				if	($INPUT->has('useall')) {
+					$defaultMod = null;
+				}
+				else {
+					$defaultMod = $this->attribute ? $this->attribute->get("twofactor","defaultmod") : null;
+				}
 				// At this point, try to send the OTP.
-				$this->twofactor_send_otp();
+				$this->twofactor_send_otp($defaultMod);
 			}
 		}
 	}
@@ -427,10 +425,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		// Setup some availability variables.
 		$optinout = $this->getConf("optinout");
 		$optstate = $this->attribute ? $this->attribute->get("twofactor","state") : '';
-		$gaavailable = $this->getConf("usega") === 1 && $this->attribute->exists("twofactor","seenqrcode");
-		$otpmethod = $this->getConf("otpmethod");
-		$otpenabled = $this->getConf("useotp") === 1;
-		$otpavailable = $otpenabled && ($otpmethod === 'email' || $this->attribute->exists("twofactor","seensms"));
 		$enable = $this->getConf("enable") && // The module is enabled AND...
 			((!$optinout === 'optin' || $optstate === 'in') // Opt-in is off OR the user has opted in
 			|| // OR...
@@ -439,13 +433,16 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$optinout === 'mandatory'; // User must participate.
 		if ($enable){ // User logged in, two factor required, but not completed.
 
-			// If we are here, the user has configured some sort two factor mechanism.  
-			// At a minimum, if they had GA setup but not OTP, then their login would have failed.
+			// If we are here, the user has configured some sort two factor 
+			// mechanism.  At a minimum, if they had login authentication 
+			// setup but not OTP, then their login would have failed.
 			// That means that we will try to process the login via OTP.
-			// If the user cannot sign in using OTP, see if they need to be directed to the profile screen 
-			// to setup two factor.
+			// If the user cannot sign in using OTP, see if they need to be 
+			// directed to the profile screen to setup two factor.
 			global $ACT;
-			if (!$otpavailable && !$gaavailable && $ACT == 'profile') {
+			// Check to see if the user has configured any module for use.
+			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
+			if (count($useableMods) == 0 && $ACT == 'profile') {
 				// We are heading to the profile page because nothing is setup.  Good.
 				return;
 			}
@@ -457,7 +454,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			}
 			if (!$otppresent || time() > $expires) {
 				// At this point, try to send the OTP.
-				$this->twofactor_send_otp();
+				$defaultMod = $this->attribute ? $this->attribute->get("twofactor","defaultmod") : null;
+				$this->twofactor_send_otp($defaultMod);
 			}
 
 			// Generate the form to login.
@@ -468,6 +466,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$form->addElement(form_makeTextField('otpcode', '', $this->getLang('twofactor_otplogin'), '', 'block', array('size'=>'50', 'autocomplete'=>'off')));
 			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_submit')));
 			$form->addElement(form_makeTag('br'));
+			$form->addElement(form_makeCheckboxField('useall', '1', $this->getLang('twofactor_useallmods'), '', 'block'));
 			$form->addElement(form_makeTag('br'));
 			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_resend'), array('name'=>'resend')));
 			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_quit'), array('name'=>'otpquit')));

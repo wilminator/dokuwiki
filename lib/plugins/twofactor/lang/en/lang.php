@@ -20,6 +20,7 @@ $lang['twofactor_smsnotice'] = "A verification one-time password has been sent t
 $lang['twofactor_failedsmssetup'] = "The code provided is incorrect.  Use of one-time password is not enabled for this account.";
 $lang['twofactor_passedsmssetup'] = "Use of one-time password is now enabled for this account.";
 $lang['twofactor_killsms'] = "Disable one-time passwords to your device";
+$lang['twofactor_useallmods'] = "Resend OTP using all configured options";
 
 $lang['btn_submit'] = "Submit";
 $lang['btn_resend'] = "Resend Code";
