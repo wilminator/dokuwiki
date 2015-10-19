@@ -43,21 +43,16 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		$this->attribute = $requireAttribute ? $this->loadHelper('attribute', 'Attribute plugin required!') : null;		
 		
 		// Now figure out what modules to load and load them.				
-		$available = Twofactor_Auth_Module::listModules();
-		$desired = explode(',', $this->getConf('modules'));
-		$unavailable = array_diff($desired, $available);
-		if (count($unavailable) > 0) {
-			msg('At least one requested module is not present.' . ' ' . implode(', ', $unavailable), -1);
-		}
-		$loading = array_intersect($available, $desired);
-		$this->modules = Twofactor_Auth_Module::loadModules($loading);
-		$failed = array_diff($loading, array_keys($this->modules));
+		$available = Twofactor_Auth_Module::_listModules();		
+		$this->modules = Twofactor_Auth_Module::_loadModules($available);
+		$failed = array_diff($available, array_keys($this->modules));
 		if (count($failed) > 0) {
 			msg('At least one loaded module did not have a properly named class.' . ' ' . implode(', ', $failed), -1);
 		}
 
 		// Sanity check.
-		$this->success = (!$requireAttribute || ($this->attribute && $this->attribute->success)) && count($this->modules) > 0);
+		msg("Number of loaded twofactor modules: ".count($this->modules));
+		$this->success = (!$requireAttribute || ($this->attribute && $this->attribute->success)) && count($this->modules) > 0;
 		
 		// This is a check flag to verify that the user's profile is being updated.
 		$this->modifyProfile = false;
@@ -121,7 +116,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		
 		// If the user is being redirected here because of mandatory two factor, then display a message saying so.
 		if (!$available && $optinout == 'mandatory') {
-			msg($this->getLang('twofactor_mandatory'), -1);
+			msg($this->getLang('mandatory'), -1);
 		}
 
 		global $USERINFO;
@@ -142,8 +137,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		//Loop through all modules and render the profile components.
 		if ($optstate == 'in') {			
 			$parts = array();
+			//echo serialize($this->modules).'<hr>';
 			foreach ($this->modules as $mod){
-				$parts = array_merge($mod->renderProfileForm(), $parts);
+				$output = $mod->renderProfileForm();
+				//echo serialize($output).'<hr>';
+				$parts = array_merge($output, $parts);
+				//echo serialize($parts).'<hr><hr>';
 			}
 			foreach($parts as $part) {
 				$event->data->insertElement($pos++, $part);
@@ -252,7 +251,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 
 			// Update change status if changed.
 			if ($changed) {
-				msg($this->getLang('twofactor_updated'), 1);
+				msg($this->getLang('updated'), 1);
 				// TODO: get the profile page to return if any two factor changes are made.
 			}
 		}
@@ -488,7 +487,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
      */
     function twofactor_send_otp($module = null) {
 		if ($module === null) {
-			$module = array_filter($this->modules, function ($x){return $x->canUse()});
+			$module = array_filter($this->modules, function ($x){ return $x->canUse(); });
 		}
 		if (!is_array($module)) {
 			$module = array($module);

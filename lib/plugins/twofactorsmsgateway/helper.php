@@ -1,10 +1,10 @@
 <?php
-class auth_module_smsgateway extends Twofactor_Auth_Module {
+class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 	/** 
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
     public function canUse(){		
-		return (array_key_exists("verified", $this->settings));
+		return ($this->attribute->exists("twofactorsmsgateway", "verified"));
 	}
 	
 	/**
@@ -20,16 +20,15 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
     public function renderProfileForm(){
 		$elements = array();
 			// Provide an input for the phone number.			
-			$phone = array_key_exists('phone', $this->settings) ? $this->settings['phone'] : '';
-			$elements['phone'] = form_makeTextField('phone', $phone, $this->getLang('phone'), '', 'block', array('size'=>'50'));
-			$providers = array_keys($this->getProviders());
-			$provider = array_key_exists('provider', $this->settings) ? $this->settings['provider'] : $providers[0];
-			$twofa_form = form_makeListboxField('smsgateway_provider', $providers, $provider, $this->getLang('provider'), '', 'block');
-			$elements[] = $twofa_form;
+			$phone = $this->_getSharedSetting('phone');
+			$elements['phone'] = form_makeTextField('phone', $phone, $this->_getSharedLang('phone'), '', 'block', array('size'=>'50'));
+			$providers = array_keys($this->_getProviders());
+			$provider = $this->attribute->exists("twofactorsmsgateway", "provider") ? $this->attribute->get("twofactorsmsgateway", "provider") : $providers[0];
+			$elements[] = form_makeListboxField('smsgateway_provider', $providers, $provider, $this->getLang('provider'), '', 'block');			 
 
 			// If the phone number has not been verified, then do so here.
 			if ($phone) {
-				if (!array_key_exists('verified', $this->settings)) {
+				if (!$this->attribute->exists("twofactorsmsgateway", "verified")) {
 					// Render the HTML to prompt for the verification/activation OTP.
 					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
 					$elements[] = form_makeTextField('smsgateway_verify', '', $this->getLang('verify'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
@@ -46,10 +45,10 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 	 */	
     public function processProfileForm(){
 		if ($INPUT->bool('smsgateway_disable', false)) {
-			unset $this->settings["phone"];
-			unset $this->settings["provider"];
+			// Do not delete the phone number. It is shared.
+			$this->attribute->delete("twofactorsmsgateway", "provider");
 			// Also delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
-			unset $this->settings["verified"];
+			$this->attribute->delete("twofactorsmsgateway", "verified");
 			return true;
 		}
 		if (!$this->canUse()) {
@@ -64,32 +63,32 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
 					return 'failed';
 				}
 				else {
-					$this->settings['verified'] = true;
+					$this->attribute->set("twofactorsmsgateway", "verified", true);
 					return 'verified';
 				}					
 			}							
 		}
 		
 		$changed = null;
-		$oldphone = array_key_exists('phone', $this->settings) ? $this->settings['phone'] : '';
+		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
 		$phone = $INPUT->str('smsgateway_phone', '');
 		if ($phone != $oldphone) {
 			if ($this->attribute->set("twofactor","phone", $phone)== false) {
 				msg("TwoFactor: Error setting phone.", -1);
 			}
 			// Delete the verification for the phone number if it was changed.
-			unset $this->settings['verified'];
+			$this->attribute->delete("twofactorsmsgateway", "verified");
 			$changed = true;
 		}
 		
-		$oldprovider = $this->attribute->get("twofactor","provider", $success);
+		$oldprovider = $this->attribute->get("twofactorsmsgateway", "provider", $success);
 		$provider = $INPUT->str('smsgateway_provider', '');
-		if ($this->getConf("otpmethod") == 'smsgateway' && $this->attribute->exists("twofactor","phone") &&$provider != $oldprovider) {
-			if ($this->attribute->set("twofactor","provider", $provider)== false) {
+		if (!$success  || $provider != $oldprovider) {
+			if ($this->attribute->set("twofactorsmsgateway","provider", $provider)== false) {
 				msg("TwoFactor: Error setting provider.", -1);
 			}
 			// Delete the verification for the phone number if the carrier was changed.
-			unset $this->settings['verified'];
+			$this->attribute->delete("twofactorsmsgateway", "verified");
 			$changed = true;
 		}
 
@@ -155,8 +154,8 @@ class auth_module_smsgateway extends Twofactor_Auth_Module {
      * @return array - keys are providers, values are the email domains used
      *      to email an SMS to a phone user.
      */
-    private function getProviders() {
-		$filename = dirname(__FILE__).'/../gateway.txt';
+    private function _getProviders() {
+		$filename = dirname(__FILE__).'/gateway.txt';
 		$providers = array();
 		$contents = explode("\n", io_readFile($filename));		
 		foreach($contents as $line) {

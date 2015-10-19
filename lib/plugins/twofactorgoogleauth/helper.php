@@ -1,19 +1,21 @@
 <?php
+// Load the Twofactor_Auth_Module Class
+require_once(dirname(__FILE__).'/../twofactor/authmod.php');
 // Load the PHPGangsta_GoogleAuthenticator Class
-require_once(dirname(__FILE__).'../GoogleAuthenticator.php');
+require_once(dirname(__FILE__).'/GoogleAuthenticator.php');
 // Load the PHP QR Code library.
-require_once(dirname(__FILE__).'../phpqrcode.php');
+require_once(dirname(__FILE__).'/phpqrcode.php');
 
 /**
  * If we turn this into a helper class, it can have its own language and settings files.
  * Until then, we can only use per-user settings.
  */
-class auth_module_googleauth extends Twofactor_Auth_Module {
+class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
 	/** 
 	 * The user must have verified their GA is configured correctly first.
 	 */
     public function canUse(){		
-		return (array_key_exists("verified", $this->settings));
+		return ($this->attribute->exists("twofactorgoogleauth", "verified"));
 	}
 	
 	/**
@@ -29,9 +31,9 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
     public function renderProfileForm(){
 		$elements = array();
 		$ga = new PHPGangsta_GoogleAuthenticator();			
-		if (array_key_exists("secret", $this->settings)) { // The user has a revokable GA secret.
+		if ($this->attribute->exists("twofactorgoogleauth", "secret")) { // The user has a revokable GA secret.
 			// Show the QR code so the user can add other devices.
-			$mysecret = $this->settings["secret"];
+			$mysecret = $this->attribute->get("twofactorgoogleauth", "secret");
 			$data = $this->twofactor_generateQRCodeData($USERINFO['mail'], $mysecret);			
 			$elements[] = '<figure><figcaption>'.$this->getLang('scanwithga').'</figcaption>';
 			$elements[] = '<img src="'.$data.'" alt="'.$this->getLang('twofactor_scanwithga').'" />';
@@ -39,7 +41,7 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
 			// Check to see if the user needs to verify the code.
 			if (!array_key_exists("verified", $this->settings)){
 				$elements[] = '<span>'.$this->getLang('twofactor_verifyga').'</span>';
-				$twofa_form = form_makeTextField('googleauth_verify', '', $this->getLang('twofactor_verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
+				$twofa_form = form_makeTextField('googleauth_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
 				$elements[] = $twofa_form;
 			}
 			// Show the option to revoke the GA secret.
@@ -59,13 +61,13 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
 	 */	
     public function processProfileForm(){
 		$ga = new PHPGangsta_GoogleAuthenticator();
-		$hasSecret = array_key_exists('secret', $this->settings);
-		$oldmysecret = $hasSecret ? $this->settings["secret"] : null;
+		$hasSecret = $this->attribute->exists("twofactorgoogleauth", "secret");
+		$oldmysecret = $hasSecret ? $this->attribute->get("twofactorgoogleauth", "secret") : null;
 		if ($hasSecret) {
 			if ($INPUT->bool('googleauth_disable', false)) {
-				unset $this->settings["secret"];
+				$this->attribute->delete("twofactorgoogleauth", "secret");
 				// Also delete the seenqrcode attribute.  Otherwise the system will still expect the user to login with GA.
-				$this->settings["verified"];
+				$this->attribute->delete("twofactorgoogleauth", "verified");
 				return true;
 			}
 			else {
@@ -84,9 +86,9 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
 			}
 		}
 		else {
-			if ($INPUT->bool('googleauth_enable', false) && !$hasSecret) { // Only make a code if one is not set.
+			if ($INPUT->bool('googleauth_enable', false)) { // Only make a code if one is not set.
 				$mysecret = $ga->createSecret();
-				$this->setting['secret'] = $mysecret;
+				$this->attribute->delete("twofactorgoogleauth", "secret", $mysecret);
 				return true;
 			}
 		}
@@ -96,7 +98,7 @@ class auth_module_googleauth extends Twofactor_Auth_Module {
 	/**
 	 * This module cannot send messages.
 	 */
-	//public function canTransmitMessage();
+	public function canTransmitMessage() { return false; }
 	
 	/**
 	 * Transmit the message via email to the address on file.

@@ -1,11 +1,14 @@
 <?php
-class auth_module_email extends Twofactor_Auth_Module {
+// Load the Twofactor_Auth_Module Class
+require_once(dirname(__FILE__).'/../twofactor/authmod.php');
+
+class helper_plugin_twofactoremail extends Twofactor_Auth_Module {
 	/** 
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
     public function canUse(){
 		global $USERINFO;
-		return preg_match(".+@.+\..+", $USERINFO['mail']);
+		return preg_match("/.+@.+\..+/", $USERINFO['mail']);
 	}
 	
 	/**

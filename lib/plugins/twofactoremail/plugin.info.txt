@@ -1,0 +1,13 @@
+﻿base   twofactoremail
+
+author Michael Wilmes
+
+email  mwilmes@avc.edu
+
+date   2015-09-10
+
+name   twofactoremail plugin
+
+desc   Email support plugin for the Twofactor authentication plugin.
+
+url    https://www.dokuwiki.org/plugin:twofactor

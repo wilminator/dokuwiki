@@ -58,6 +58,10 @@
 !/lib/plugins/syntax.php
 !/lib/plugins/attribute
 !/lib/plugins/twofactor
+!/lib/plugins/twofactoremail
+!/lib/plugins/twofactorgoogleauth
+!/lib/plugins/twofactorsmsgateway
+!/lib/plugins/twofactorappliance
 lib/images/*/local/*
 
 # composer default ignores
