@@ -341,6 +341,7 @@ class helper_plugin_attribute extends DokuWiki_Plugin {
         }
 
         $user = $this->validateUser($user);
+		msg("$namespace, $attribute, $user");
         if($user === null) {
             return false;
         }

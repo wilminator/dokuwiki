@@ -40,6 +40,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
             'name'       => 'canUse',
             'desc'       => "This is called to see if the user can use it to login.",
             'parameters' => array(                
+                'user' => 'string',
             ),
             'return'     => array('useable' => 'boolean'),
         );
@@ -84,6 +85,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
             'desc'       => "This is called to validate the code provided.  The default is to see if the code matches the one-time password.",
             'parameters' => array(
                 'code' => 'string',
+                'user' => 'string',
             ),
             'return'     => array('success' => 'boolean'),
         );
@@ -95,7 +97,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 * @return bool - True if this module has access to all needed information 
 	 * to perform a login.
 	 */
-    abstract public function canUse();
+    abstract public function canUse($user = null);
 	
 	/**
 	 * This is called to see if the module provides login functionality on the 
@@ -146,7 +148,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 * @return bool - True if the user has successfully authenticated using 
 	 * this mechanism.
 	 */
-	public function processLogin($code) {
+	public function processLogin($code, $user = null) {
 		$twofactor = plugin_load('action', 'twofactor');
 		$otpQuery = $twofactor->get_opt_code();
 		if (!otpQuery) { return false; }

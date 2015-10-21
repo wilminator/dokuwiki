@@ -6,9 +6,9 @@ class helper_plugin_twofactoremail extends Twofactor_Auth_Module {
 	/** 
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
-    public function canUse(){
+    public function canUse($user = null){
 		global $USERINFO;
-		return preg_match("/.+@.+\..+/", $USERINFO['mail']);
+		return preg_match("/.+@.+\..+/", $USERINFO['mail']) && $this->getConf('enable') === 1;
 	}
 	
 	/**

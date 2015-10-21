@@ -3,8 +3,8 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 	/** 
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
-    public function canUse(){		
-		return ($this->attribute->exists("twofactorsmsgateway", "verified"));
+    public function canUse($user = null){		
+		return ($this->attribute->exists("twofactorsmsgateway", "verified", $user) && $this->getConf('enable') === 1);
 	}
 	
 	/**
@@ -44,11 +44,12 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 	 * Process any user configuration.
 	 */	
     public function processProfileForm(){
+		global $INPUT;
 		if ($INPUT->bool('smsgateway_disable', false)) {
 			// Do not delete the phone number. It is shared.
-			$this->attribute->delete("twofactorsmsgateway", "provider");
+			$this->attribute->del("twofactorsmsgateway", "provider");
 			// Also delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
-			$this->attribute->delete("twofactorsmsgateway", "verified");
+			$this->attribute->del("twofactorsmsgateway", "verified");
 			return true;
 		}
 		if (!$this->canUse()) {
@@ -77,7 +78,7 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 				msg("TwoFactor: Error setting phone.", -1);
 			}
 			// Delete the verification for the phone number if it was changed.
-			$this->attribute->delete("twofactorsmsgateway", "verified");
+			$this->attribute->del("twofactorsmsgateway", "verified");
 			$changed = true;
 		}
 		
@@ -88,7 +89,7 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 				msg("TwoFactor: Error setting provider.", -1);
 			}
 			// Delete the verification for the phone number if the carrier was changed.
-			$this->attribute->delete("twofactorsmsgateway", "verified");
+			$this->attribute->del("twofactorsmsgateway", "verified");
 			$changed = true;
 		}
 
