@@ -90,7 +90,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Ensures we are in the user profile.
             $controller->register_hook('ACTION_ACT_PREPROCESS', 'BEFORE', $this, 'twofactor_action_process_handler', array());
 			// Updates user settings. Ensures that the settings ceom from the profile using a flag passed by the above hook.
-            $controller->register_hook('AUTH_USER_CHANGE', 'AFTER', $this, 'twofactor_process_changes', array());
+            $controller->register_hook('AUTH_USER_CHANGE', 'BEFORE', $this, 'twofactor_process_changes', array());
 			// If the user supplies a token code at login, checks it before logging the user in.
 			$controller->register_hook('AUTH_LOGIN_CHECK', 'BEFORE', $this, 'twofactor_before_auth_check', array());
 			// Atempts to process the second login if the user hasn't done so already.
@@ -113,6 +113,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
      * Handles the profile form rendering.  Displays user manageable settings.
      */
     public function twofactor_profile_form(&$event, $param) {
+		if ($this->getConf("enable") !== 1 || !$this->success) { return; }
+
 		$optinout = $this->getConf("optinout");
 		$optstate = $optinout == 'mandatory' ? 'in' : ($this->attribute ? $this->attribute->get("twofactor","state") : '');
 		$available = false;
@@ -145,10 +147,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$parts = array();
 			//echo serialize($this->modules).'<hr>';
 			foreach ($this->modules as $mod){
-				$output = $mod->renderProfileForm();
-				//echo serialize($output).'<hr>';
-				$parts = array_merge($output, $parts);
-				//echo serialize($parts).'<hr><hr>';
+				if ($mod->getConf("enable") == 1) {
+					$output = $mod->renderProfileForm();
+					//echo serialize($output).'<hr>';
+					$parts = array_merge($output, $parts);
+					//echo serialize($parts).'<hr><hr>';
+				}
 			}
 			foreach($parts as $part) {
 				$event->data->insertElement($pos++, $part);
@@ -217,8 +221,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
     function twofactor_process_changes(&$event, $param) {
 		// If the plugin is disabled, then exit.
 		if ($this->getConf("enable") !== 1 || !$this->success) { return; }
-		// If this is a modify event that succeeded, we are ok.
-		if ($event->data['type'] == 'modify' && in_array($event->data['modification_result'], array(true, 1)) && $this->modifyProfile) {
+		// If a password was required but incorrect, we would not be here.
+		// The updateprofile method would have aborted earlier.
+		// If this is a modify event, we are ok.
+		if ($event->data['type'] == 'modify' && $this->modifyProfile) {
 			$changed = false;
 			global $INPUT, $USERINFO;
 			// Process opt in/out.
@@ -233,7 +239,9 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Update module settings.
 			$sendotp = null;
 			foreach ($this->modules as $name=>$mod){
+				msg("$name");
 				$result = $mod->processProfileForm();
+				msg("$name: ".(int)$result);
 				$changed |= $result !== false && $result !== 'failed';
 				switch($result) {
 					case 'verified':
@@ -343,7 +351,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			if ($this->getConf("optinout") != 'mandatory') {
 				//There is no two factor configured for this user and it is not mandatory. Give clearance.
 				$this->_grant_clearance();
-			}	
+			}				
+			if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
+				return;
+			}
 			// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 			$ACT = 'profile';
 		}		
@@ -382,6 +393,9 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					//There is no two factor configured for this user and it is not mandatory. Give clearance.
 					$this->_grant_clearance();
 				}	
+				if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
+					return;
+				}
 				// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 				$ACT = 'profile';
 				return;
@@ -462,6 +476,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
 			if (count($useableMods) == 0 && $ACT == 'profile') {
 				// We are heading to the profile page because nothing is setup.  Good.
+				return;
+			}
+			
+			if ($ACT == 'admin') { // In case we are heading to the admin page to fix something, bypass.
 				return;
 			}
 			
