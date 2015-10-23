@@ -58,6 +58,7 @@
 !/lib/plugins/syntax.php
 !/lib/plugins/attribute
 !/lib/plugins/twofactor
+!/lib/plugins/twofactoraltemail
 !/lib/plugins/twofactoremail
 !/lib/plugins/twofactorgoogleauth
 !/lib/plugins/twofactorsmsgateway
