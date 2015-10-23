@@ -450,7 +450,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// This has to be checked before the template is started.
 			if ($INPUT->has('otpquit')) {
 				// Redirect to logoff.
-				$event->preventDefault();
+				//$event->preventDefault();
 				$event->stopPropagation();
 				$ACT = 'logout';
 				return;
@@ -495,6 +495,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		$twofactor = $this->get_clearance();
 		if ($_SERVER['REMOTE_USER'] == '' || $twofactor === true) { return; }
 		
+		// I fht euser is logging out, don't stop them.
+		global $ACT;
+		if ($ACT == 'logoff') { return; }
+		
 		// Setup some availability variables.
 		$optinout = $this->getConf("optinout");
 		$optstate = $this->attribute ? $this->attribute->get("twofactor","state") : '';
@@ -525,12 +529,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			}
 			
 			// Ensure the OTP exists and is still valid. If we need to, send a OTP.
-			$otppresent = $this->attribute->exists("twofactor","otp");
-			if ($otppresent) {
-				list($myotp, $expires, $modname) = $this->attribute->get("twofactor","otp");
-			}
-			if (!$otppresent || time() > $expires) {
-				// At this point, try to send the OTP.
+			$otpQuery = $this->get_otp_code();
+			if ($otpQuery == false) {
 				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
 				$this->_send_otp($defaultMod);
 			}

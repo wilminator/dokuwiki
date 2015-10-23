@@ -8,4 +8,5 @@ $lang['failedsetup'] = "The code provided did not work.  Code by alternate email
 $lang['passedsetup'] = "Code by alternate email is now enabled for this account.";
 $lang['verifynotice'] = "A verification code has been sent to your alternate email.  If you do not receive it within a few minutes, please contact a wiki administrator.";
 $lang['moduleready'] = "Email is configured.";
-$lang['resendcode'] = "Resend code to email";
+$lang['resendcode'] = "Resend code to alternate email";
+$lang['notsameemail'] = "The alternate email address must be different than your currently registered email.";

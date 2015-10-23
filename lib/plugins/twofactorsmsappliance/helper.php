@@ -45,7 +45,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 		if ($INPUT->bool('smsappliance_disable', false)) {
 			// Do not delete the phone number. It is shared.
 			// Delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
-			$this->attribute->delete("twofactorsmsappliance", "verified");
+			$this->attribute->del("twofactorsmsappliance", "verified");
 			return true;
 		}
 		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
@@ -97,7 +97,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	/**
 	 * Transmit the message via email to the address on file.
 	 */
-	public function transmitMessage($message, $force = false){
+	public function transmitMessage($message, $force = false){		
 		if (!$this->canUse()  && !$force) { return false; }
 		$number = $this->attribute->get("twofactor","phone", $success);
 		if (!$number) {

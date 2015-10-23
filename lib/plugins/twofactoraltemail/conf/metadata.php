@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Options for the twofactor_email plugin
+ * Options for the twofactor_altemail plugin
  *
  * @author Mike Wilmes <mwilmes@avc.edu>
  */
