@@ -1,1 +1,2 @@
 <?php
+$lang['Name'] = 'Email';

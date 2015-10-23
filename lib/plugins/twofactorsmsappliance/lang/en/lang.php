@@ -1,4 +1,5 @@
 <?php
+$lang['Name'] = 'Text by SMS appliance';
 $lang['enablemodule'] = "Use Google Authenticator";
 $lang['verifymodule'] = "Enter code sent by SMS";
 $lang['killmodule'] = "Revoke codes by SMS appliance";

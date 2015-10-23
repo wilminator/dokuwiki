@@ -69,15 +69,22 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 		
 		$changed = null;		
 		$phone = $INPUT->str('phone', '');
-		if ($phone != $oldphone) {
-			if ($this->attribute->set("twofactor","phone", $phone)== false) {
-				msg("TwoFactor: Error setting phone.", -1);
-			}			
-			// Delete the verification for the phone number if it was changed.
-			$this->attribute->del("twofactorsmsappliance", "verified");
-			$changed = true;
+		if (preg_match('/^[0-9]{5,}$/',$phone) != false) { 
+			if ($phone != $oldphone) {
+				if ($this->attribute->set("twofactor","phone", $phone)== false) {
+					msg("TwoFactor: Error setting phone.", -1);
+				}
+				msg("set");
+				// Delete the verification for the phone number if it was changed.
+				$this->attribute->del("twofactorsmsgateway", "verified");
+				$changed = true;
+			}
 		}
 		
+		// If the data changed and we have everything needed to use this module, send an otp.
+		if ($changed === true && $this->attribute->exists("twofactor", "phone")) {
+			$changed = 'otp';
+		}		
 		return $changed;
 	}	
 	
@@ -94,7 +101,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	public function transmitMessage($message, $force = false){
 		if (!$this->canUse()  && !$force) { return false; }
 		$number = $this->attribute->get("twofactor","phone", $success);
-		if (!$success) {
+		if (!$number) {
 			// If there is no phone number, then fail.
 			return false;
 		}

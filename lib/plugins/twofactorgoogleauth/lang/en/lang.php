@@ -1,4 +1,5 @@
 <?php
+$lang['Name'] = 'Google Authenticator';
 $lang['enablemodule'] = "Use Google Authenticator";
 $lang['directions'] = "Scan with Google Authenticator";
 $lang['verifymodule'] = "Enter code from Google Authenticator";

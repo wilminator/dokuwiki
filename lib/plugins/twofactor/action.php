@@ -158,6 +158,17 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			foreach($parts as $part) {
 				$event->data->insertElement($pos++, $part);
 			}
+			// Last output a field for the default module, if more than one can be used.
+			$useableMods = array();
+			foreach($this->modules as $name=>$mod) {
+				if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
+					$useableMods[$mod->getLang("name")] = $mod; 
+				}
+			}
+			if (count($useableMods)>0) {
+				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
+				$elements[] = form_makeListboxField('default_module', array_keys($useableMods), $defaultMod, $this->getLang('provider'), '', 'block');			 
+			}
 		}
     }
 
@@ -241,7 +252,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$sendotp = null;
 			foreach ($this->modules as $name=>$mod){
 				$result = $mod->processProfileForm();
-				msg("$name: ".(int)$result);
+				msg("$name: ".serialize($result));
 				// false:change failed  'failed':OTP failed  null: no change made
 				$changed |= $result !== false && $result !== 'failed' && $result !== null;
 				switch($result) {
@@ -257,15 +268,19 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 						break;
 					case 'otp':
 						if (!$sendotp) {
-							$sendotp = $mod;
-							msg($mod->getLang('needsetup'), 1);
+							$sendotp = $mod;							
 						}						
 				}
 			}
 			// Send OTP if requested.
 			if ($sendotp) {
-				// Force the message since it will fail the canUse function.
-				$this->_send_otp($sendotp, true);
+				// Force the message since it will fail the canUse function.				
+				if ($this->_send_otp($sendotp, true)) {
+					msg($sendotp->getLang('needsetup'), 1);
+				}
+				else {
+					msg("Could not send message using ".get_class($sendotp),-1);
+				}
 			}
 
 			// Update change status if changed.
@@ -308,7 +323,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 				$workingMods[] = $mod; 
 			}
 		}
-		msg("User:".$user." Mods:".count($this->modules)." Working:".count($workingMods));
 		if (count($workingMods) > 0 && $user) {  
 			$otp = $INPUT->str('otp','');
 			if ($otp) {
@@ -350,7 +364,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		}
 		
 		// Check to see if the user has configured any module for use.
-		$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse($user); });
+		$useableMods = array();
+		foreach($this->modules as $name=>$mod) {
+			if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
+				$useableMods[] = $mod; 
+			}
+		}
 		if (count($useableMods) == 0) {
 			// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
 			if ($this->getConf("optinout") != 'mandatory') {
@@ -361,6 +380,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 				return;
 			}
 			// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
+			msg("twofactor_before_auth_check sending to profile.");
 			$ACT = 'profile';
 		}		
     }
@@ -402,6 +422,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					return;
 				}
 				// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
+				msg("twofactor_after_auth_check sending to profile.");
 				$ACT = 'profile';
 				return;
 			}		
@@ -421,7 +442,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$otp = $INPUT->str('otpcode');
 			$otppresent = $this->attribute->exists("twofactor","otp");
 			if ($otppresent) {
-				list($myotp, $expires) = $this->attribute->get("twofactor","otp");
+				list($myotp, $expires, $modname) = $this->attribute->get("twofactor","otp");
 			}
 			if ($otp && !$INPUT->has('resend')) {
 				if ($otp != $myotp || time() > $expires) {
@@ -441,7 +462,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					$defaultMod = null;
 				}
 				else {
-					$defaultMod = $this->attribute ? $this->attribute->get("twofactor","defaultmod") : null;
+					$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
 				}
 				// At this point, try to send the OTP.
 				$this->_send_otp($defaultMod);
@@ -491,11 +512,11 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Ensure the OTP exists and is still valid. If we need to, send a OTP.
 			$otppresent = $this->attribute->exists("twofactor","otp");
 			if ($otppresent) {
-				list($myotp, $expires) = $this->attribute->get("twofactor","otp");
+				list($myotp, $expires, $modname) = $this->attribute->get("twofactor","otp");
 			}
 			if (!$otppresent || time() > $expires) {
 				// At this point, try to send the OTP.
-				$defaultMod = $this->attribute ? $this->attribute->get("twofactor","defaultmod") : null;
+				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
 				$this->_send_otp($defaultMod);
 			}
 
@@ -559,7 +580,9 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		
 		// If partially successful, store the OTP code and the timestamp the OTP expires at.		
 		if ($success > 0) {			
-			if (!$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('sentexpiry') * 60, $modname))){
+			$otpData = array($otp, time() + $this->getConf('sentexpiry') * 60, $modname);
+			msg(serialize($otpData));
+			if (!$this->attribute->set("twofactor","otp", $otpData)){
 				msg("Unable to record OTP for later use.", -1);
 			}
 		}

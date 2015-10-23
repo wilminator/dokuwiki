@@ -20,7 +20,7 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
     public function renderProfileForm(){
 		$elements = array();
 			// Provide an input for the phone number.			
-			$phone = $this->_getSharedSetting('phone');
+			$phone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
 			$elements['phone'] = form_makeTextField('phone', $phone, $this->_getSharedLang('phone'), '', 'block', array('size'=>'50'));
 			$providers = array_keys($this->_getProviders());
 			$provider = $this->attribute->exists("twofactorsmsgateway", "provider") ? $this->attribute->get("twofactorsmsgateway", "provider") : $providers[0];
@@ -31,11 +31,11 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 				if (!$this->attribute->exists("twofactorsmsgateway", "verified")) {
 					// Render the HTML to prompt for the verification/activation OTP.
 					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
-					$elements[] = form_makeTextField('smsgateway_verify', '', $this->getLang('verify'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-					$elements[] = form_makeCheckboxField('smsgateway_send', '1', $this->getLang('resend'),'','block');
+					$elements[] = form_makeTextField('smsgateway_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
+					$elements[] = form_makeCheckboxField('smsgateway_send', '1', $this->getLang('resendcode'),'','block');
 				}
 				// Render the element to remove the phone since it exists.
-				$elements[] = form_makeCheckboxField('smsgateway_disable', '1', $this->getLang('disable'), '', 'block');
+				$elements[] = form_makeCheckboxField('smsgateway_disable', '1', $this->getLang('killmodule'), '', 'block');
 			}			
 		return $elements;
 	}
@@ -52,7 +52,7 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 			$this->attribute->del("twofactorsmsgateway", "verified");
 			return true;
 		}
-		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactore", "phone") : '';
+		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
 		if ($oldphone) {
 			if ($INPUT->bool('smsgateway_send', false)) {
 				return 'otp';
@@ -73,14 +73,16 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 		
 		$changed = null;
 		$phone = $INPUT->str('phone', '');
-		if ($phone != $oldphone) {
-			if ($this->attribute->set("twofactor","phone", $phone)== false) {
-				msg("TwoFactor: Error setting phone.", -1);
+		if (preg_match('/^[0-9]{5,}$/',$phone) != false) { 
+			if ($phone != $oldphone) {
+				if ($this->attribute->set("twofactor","phone", $phone)== false) {
+					msg("TwoFactor: Error setting phone.", -1);
+				}
+				msg("set");
+				// Delete the verification for the phone number if it was changed.
+				$this->attribute->del("twofactorsmsgateway", "verified");
+				$changed = true;
 			}
-			msg("set");
-			// Delete the verification for the phone number if it was changed.
-			$this->attribute->del("twofactorsmsgateway", "verified");
-			$changed = true;
 		}
 		
 		$oldprovider = $this->attribute->get("twofactorsmsgateway", "provider", $success);
@@ -93,7 +95,11 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 			$this->attribute->del("twofactorsmsgateway", "verified");
 			$changed = true;
 		}
-
+		
+		// If the data changed and we have everything needed to use this module, send an otp.
+		if ($changed && $this->attribute->exists("twofactorsmsgateway", "provider") && $this->attribute->get("twofactor", "phone") !='') {
+			$changed = 'otp';
+		}
 		return $changed;
 	}	
 	
@@ -108,19 +114,21 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 	 * Transmit the message via email to the address on file.
 	 * As a special case, configure the mail settings to send only via text.
 	 */
-	public function transmitMessage($message){
-		if (!$this->canUse()) { return false; }
+	public function transmitMessage($message, $force = false){
+		if (!$this->canUse()  && !$force) { return false; }
 		global $USERINFO, $conf;
-		// Disable HTML for text messages.				
+		// Disable HTML for text messages.	
+		$oldconf = $conf['htmlmail'];
 		$conf['htmlmail'] = 0;			
-		$number = $this->settings["phone"];
+		$number = $this->attribute->get("twofactor", "phone");
 		if (!$number) {
 			msg("TwoFactor: User has not defined a phone number.  Failing.", -1);
 			// If there is no phone number, then fail.
 			return false;
 		}
-		$gateway = $this->settings["provider"];
-		$providers = $this->getProviders();
+		$gateway = $this->attribute->get("twofactorsmsgateway", "provider");
+		msg ("$number@$gateway");
+		$providers = $this->_getProviders();
 		if (array_key_exists($gateway, $providers)) {
 			$to = "{$number}@{$providers[$gateway]}";
 		}
@@ -139,8 +147,10 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 		$mail->subject($subject);
 		$mail->setText($message);			
 		$result = $mail->send();
+		// Reset the email config in case another email gets sent.
+		$conf['htmlmail'] = $oldconf;
 		// This is here only for debugging for me for now.  My windows box can't send out emails :P
-		msg($message, 0);
+		msg($message, 0); return true;
 		return $result;
 		}
 	
