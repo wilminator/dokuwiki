@@ -20,7 +20,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
     public function renderProfileForm(){
 		$elements = array();
 			// Provide an input for the phone number.			
-			$phone = $this->_getSharedSetting('phone');
+			$phone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
 			$elements['phone'] = form_makeTextField('phone', $phone, $this->_getSharedLang('phone'), '', 'block', array('size'=>'50'));			
 
 			// If the phone number has not been verified, then do so here.
@@ -28,11 +28,11 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 				if (!$this->attribute->exists("twofactorsmsappliance", "verified")) {
 					// Render the HTML to prompt for the verification/activation OTP.
 					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
-					$elements[] = form_makeTextField('smsappliance_verify', '', $this->getLang('verify'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
-					$elements[] = form_makeCheckboxField('smsappliance_send', '1', $this->getLang('resend'),'','block');
+					$elements[] = form_makeTextField('smsappliance_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
+					$elements[] = form_makeCheckboxField('smsappliance_send', '1', $this->getLang('resendcode'),'','block');
 				}
 				// Render the element to remove the phone since it exists.
-				$elements[] = form_makeCheckboxField('smsappliance_disable', '1', $this->getLang('disable'), '', 'block');
+				$elements[] = form_makeCheckboxField('smsappliance_disable', '1', $this->getLang('killmodule'), '', 'block');
 			}			
 		return $elements;
 	}
@@ -41,13 +41,15 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	 * Process any user configuration.
 	 */	
     public function processProfileForm(){
+		global $INPUT;
 		if ($INPUT->bool('smsappliance_disable', false)) {
 			// Do not delete the phone number. It is shared.
 			// Delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
 			$this->attribute->delete("twofactorsmsappliance", "verified");
 			return true;
 		}
-		if (!$this->canUse()) {
+		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
+		if ($oldphone) {
 			if ($INPUT->bool('smsappliance_send', false)) {
 				return 'otp';
 			}
@@ -59,21 +61,20 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 					return 'failed';
 				}
 				else {
-					$this->settings['verified'] = true;
+					$this->attribute->set("twofactorsmsappliance", "verified", true);
 					return 'verified';
 				}					
 			}							
 		}
 		
-		$changed = null;
-		$oldphone = array_key_exists('phone', $this->settings) ? $this->settings['phone'] : '';
-		$phone = $INPUT->str('smsappliance_phone', '');
+		$changed = null;		
+		$phone = $INPUT->str('phone', '');
 		if ($phone != $oldphone) {
 			if ($this->attribute->set("twofactor","phone", $phone)== false) {
 				msg("TwoFactor: Error setting phone.", -1);
-			}
+			}			
 			// Delete the verification for the phone number if it was changed.
-			#unset $this->settings['verified'];
+			$this->attribute->del("twofactorsmsappliance", "verified");
 			$changed = true;
 		}
 		
@@ -89,20 +90,20 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	
 	/**
 	 * Transmit the message via email to the address on file.
-	 * As a special case, configure the mail settings to send only via text.
 	 */
-	public function transmitMessage($message){
-		if (!$this->canUse()) { return false; }
+	public function transmitMessage($message, $force = false){
+		if (!$this->canUse()  && !$force) { return false; }
 		$number = $this->attribute->get("twofactor","phone", $success);
 		if (!$success) {
 			// If there is no phone number, then fail.
 			return false;
 		}
-		$url = str_replace('$phone', $number, $this->getConf('otpurl'));
+		$url = str_replace('$phone', $number, $this->getConf('url'));
 		$url = str_replace('$msg', rawurlencode($message), $url);
 		// Deliver the message and capture the results.
 		$result = file_get_contents($url);
 		// TODO: How do we verify success?
+		return true;
 		}
 	
 	/**

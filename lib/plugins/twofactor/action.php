@@ -44,11 +44,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		
 		// Now figure out what modules to load and load them.				
 		$available = Twofactor_Auth_Module::_listModules();		
-		$this->modules = Twofactor_Auth_Module::_loadModules($available);
-		$failed = array_diff($available, array_keys($this->modules));
+		$allmodules = Twofactor_Auth_Module::_loadModules($available);
+		$failed = array_diff($available, array_keys($allmodules));
 		if (count($failed) > 0) {
 			msg('At least one loaded module did not have a properly named class.' . ' ' . implode(', ', $failed), -1);
 		}
+		$this->modules =array_filter($allmodules, function($obj) {return $obj->getConf('enable') == 1;});
 
 		// Sanity check.
 		msg("Number of loaded twofactor modules: ".count($this->modules));
@@ -239,15 +240,17 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Update module settings.
 			$sendotp = null;
 			foreach ($this->modules as $name=>$mod){
-				msg("$name");
 				$result = $mod->processProfileForm();
 				msg("$name: ".(int)$result);
-				$changed |= $result !== false && $result !== 'failed';
+				// false:change failed  'failed':OTP failed  null: no change made
+				$changed |= $result !== false && $result !== 'failed' && $result !== null;
 				switch($result) {
 					case 'verified':
 						// Remove used OTP.
 						$this->attribute->del("twofactor","otp");
 						msg($mod->getLang('passedsetup'), 1);
+						// The OTP was valid.  Clear the login so the user can continue unbothered.
+						$this->_grant_clearance();						
 						break;
 					case 'failed':
 						msg($mod->getLang('failedsetup'), -1);
@@ -255,12 +258,14 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					case 'otp':
 						if (!$sendotp) {
 							$sendotp = $mod;
+							msg($mod->getLang('needsetup'), 1);
 						}						
 				}
 			}
 			// Send OTP if requested.
 			if ($sendotp) {
-				$this->_send_otp($sendotp);
+				// Force the message since it will fail the canUse function.
+				$this->_send_otp($sendotp, true);
 			}
 
 			// Update change status if changed.
@@ -522,13 +527,20 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 	 *     modules, false if all failed, and a number of how many successes 
 	 *     if only some modules failed.
      */
-    private function _send_otp($module = null) {
-		if ($module === null) {
+    private function _send_otp($module = null,$force = false) {
+		if ($module === null) {			
 			$module = array_filter($this->modules, function ($x){ return $x->canUse(); });
 		}
-		if (!is_array($module)) {
+		if (!is_array($module)) {			
 			$module = array($module);
 		}		
+		if (count($module)==1) {
+			$modname = get_class($module[0]);
+		} 
+		else {
+			$modname = null;
+		}
+		
 		// Generate the OTP code.
 		$characters = '0123456789';
 		$otp = '';
@@ -541,14 +553,27 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		$success = 0;
 		foreach($module as $mod) {
 			if ($mod->canTransmitMessage()) {
-				$success += $mod->transmitMessage($message) ? 1 : 0;
+				$success += $mod->transmitMessage($message, $force) ? 1 : 0;
 			}
 		}
 		
-		// If partially successful, store the OTP code and the timestamp the OTP expires at.
-		if ($success > 0) {
-			$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('otpexpiry') * 60));
+		// If partially successful, store the OTP code and the timestamp the OTP expires at.		
+		if ($success > 0) {			
+			if (!$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('sentexpiry') * 60, $modname))){
+				msg("Unable to record OTP for later use.", -1);
+			}
 		}
 		return $success == 0 ? false : ($success == count($mod) ? true : $success);
+	}
+	
+	public function get_otp_code() {
+		$otpQuery = $this->attribute->get("twofactor","otp", $success);		
+		if (!$success) { return false; }
+		list($otp, $expiry, $modname) = $otpQuery;
+		if (time() > $expiry) {			
+			$this->attribute->del("twofactor","otp");
+			return false;
+		}
+		return array($otp, $modname);
 	}
 }

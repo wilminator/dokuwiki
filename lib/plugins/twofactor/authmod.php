@@ -140,7 +140,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 * that someone has logged in using their account.
 	 * @return bool - True if the message was sucecssfully transmitted.
 	 */
-	public function transmitMessage($message) { return false; }
+	public function transmitMessage($message, $force = false) { return false; }
 
 	/**
 	 * This is called to validate the code provided.  The default is to see if 
@@ -150,10 +150,10 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 */
 	public function processLogin($code, $user = null) {
 		$twofactor = plugin_load('action', 'twofactor');
-		$otpQuery = $twofactor->get_opt_code();
-		if (!otpQuery) { return false; }
-		list($otp, $destination) = $otpQuery;
-		return ($code == $otp && $code != '' && ($destination == null || 'auth_module_' . $destination == get_called_class()));
+		$otpQuery = $twofactor->get_otp_code();
+		if (!$otpQuery) { return false; }
+		list($otp, $modname) = $otpQuery;
+		return ($code == $otp && $code != '' && ($modname == null || $modname == get_called_class()));
 	}
 	
 	/**
