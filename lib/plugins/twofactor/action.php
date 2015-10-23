@@ -44,11 +44,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		
 		// Now figure out what modules to load and load them.				
 		$available = Twofactor_Auth_Module::_listModules();		
-		$this->modules = Twofactor_Auth_Module::_loadModules($available);
-		$failed = array_diff($available, array_keys($this->modules));
+		$allmodules = Twofactor_Auth_Module::_loadModules($available);
+		$failed = array_diff($available, array_keys($allmodules));
 		if (count($failed) > 0) {
 			msg('At least one loaded module did not have a properly named class.' . ' ' . implode(', ', $failed), -1);
 		}
+		$this->modules =array_filter($allmodules, function($obj) {return $obj->getConf('enable') == 1;});
 
 		// Sanity check.
 		msg("Number of loaded twofactor modules: ".count($this->modules));
@@ -90,7 +91,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Ensures we are in the user profile.
             $controller->register_hook('ACTION_ACT_PREPROCESS', 'BEFORE', $this, 'twofactor_action_process_handler', array());
 			// Updates user settings. Ensures that the settings ceom from the profile using a flag passed by the above hook.
-            $controller->register_hook('AUTH_USER_CHANGE', 'AFTER', $this, 'twofactor_process_changes', array());
+            $controller->register_hook('AUTH_USER_CHANGE', 'BEFORE', $this, 'twofactor_process_changes', array());
 			// If the user supplies a token code at login, checks it before logging the user in.
 			$controller->register_hook('AUTH_LOGIN_CHECK', 'BEFORE', $this, 'twofactor_before_auth_check', array());
 			// Atempts to process the second login if the user hasn't done so already.
@@ -113,6 +114,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
      * Handles the profile form rendering.  Displays user manageable settings.
      */
     public function twofactor_profile_form(&$event, $param) {
+		if ($this->getConf("enable") !== 1 || !$this->success) { return; }
+
 		$optinout = $this->getConf("optinout");
 		$optstate = $optinout == 'mandatory' ? 'in' : ($this->attribute ? $this->attribute->get("twofactor","state") : '');
 		$available = false;
@@ -145,10 +148,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$parts = array();
 			//echo serialize($this->modules).'<hr>';
 			foreach ($this->modules as $mod){
-				$output = $mod->renderProfileForm();
-				//echo serialize($output).'<hr>';
-				$parts = array_merge($output, $parts);
-				//echo serialize($parts).'<hr><hr>';
+				if ($mod->getConf("enable") == 1) {
+					$output = $mod->renderProfileForm();
+					//echo serialize($output).'<hr>';
+					$parts = array_merge($output, $parts);
+					//echo serialize($parts).'<hr><hr>';
+				}
 			}
 			foreach($parts as $part) {
 				$event->data->insertElement($pos++, $part);
@@ -217,8 +222,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
     function twofactor_process_changes(&$event, $param) {
 		// If the plugin is disabled, then exit.
 		if ($this->getConf("enable") !== 1 || !$this->success) { return; }
-		// If this is a modify event that succeeded, we are ok.
-		if ($event->data['type'] == 'modify' && in_array($event->data['modification_result'], array(true, 1)) && $this->modifyProfile) {
+		// If a password was required but incorrect, we would not be here.
+		// The updateprofile method would have aborted earlier.
+		// If this is a modify event, we are ok.
+		if ($event->data['type'] == 'modify' && $this->modifyProfile) {
 			$changed = false;
 			global $INPUT, $USERINFO;
 			// Process opt in/out.
@@ -234,12 +241,16 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$sendotp = null;
 			foreach ($this->modules as $name=>$mod){
 				$result = $mod->processProfileForm();
-				$changed |= $result !== false && $result !== 'failed';
+				msg("$name: ".(int)$result);
+				// false:change failed  'failed':OTP failed  null: no change made
+				$changed |= $result !== false && $result !== 'failed' && $result !== null;
 				switch($result) {
 					case 'verified':
 						// Remove used OTP.
 						$this->attribute->del("twofactor","otp");
 						msg($mod->getLang('passedsetup'), 1);
+						// The OTP was valid.  Clear the login so the user can continue unbothered.
+						$this->_grant_clearance();						
 						break;
 					case 'failed':
 						msg($mod->getLang('failedsetup'), -1);
@@ -247,12 +258,14 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					case 'otp':
 						if (!$sendotp) {
 							$sendotp = $mod;
+							msg($mod->getLang('needsetup'), 1);
 						}						
 				}
 			}
 			// Send OTP if requested.
 			if ($sendotp) {
-				$this->_send_otp($sendotp);
+				// Force the message since it will fail the canUse function.
+				$this->_send_otp($sendotp, true);
 			}
 
 			// Update change status if changed.
@@ -343,7 +356,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			if ($this->getConf("optinout") != 'mandatory') {
 				//There is no two factor configured for this user and it is not mandatory. Give clearance.
 				$this->_grant_clearance();
-			}	
+			}				
+			if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
+				return;
+			}
 			// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 			$ACT = 'profile';
 		}		
@@ -382,6 +398,9 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					//There is no two factor configured for this user and it is not mandatory. Give clearance.
 					$this->_grant_clearance();
 				}	
+				if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
+					return;
+				}
 				// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
 				$ACT = 'profile';
 				return;
@@ -465,6 +484,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 				return;
 			}
 			
+			if ($ACT == 'admin') { // In case we are heading to the admin page to fix something, bypass.
+				return;
+			}
+			
 			// Ensure the OTP exists and is still valid. If we need to, send a OTP.
 			$otppresent = $this->attribute->exists("twofactor","otp");
 			if ($otppresent) {
@@ -504,13 +527,20 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 	 *     modules, false if all failed, and a number of how many successes 
 	 *     if only some modules failed.
      */
-    private function _send_otp($module = null) {
-		if ($module === null) {
+    private function _send_otp($module = null,$force = false) {
+		if ($module === null) {			
 			$module = array_filter($this->modules, function ($x){ return $x->canUse(); });
 		}
-		if (!is_array($module)) {
+		if (!is_array($module)) {			
 			$module = array($module);
 		}		
+		if (count($module)==1) {
+			$modname = get_class($module[0]);
+		} 
+		else {
+			$modname = null;
+		}
+		
 		// Generate the OTP code.
 		$characters = '0123456789';
 		$otp = '';
@@ -523,14 +553,27 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		$success = 0;
 		foreach($module as $mod) {
 			if ($mod->canTransmitMessage()) {
-				$success += $mod->transmitMessage($message) ? 1 : 0;
+				$success += $mod->transmitMessage($message, $force) ? 1 : 0;
 			}
 		}
 		
-		// If partially successful, store the OTP code and the timestamp the OTP expires at.
-		if ($success > 0) {
-			$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('otpexpiry') * 60));
+		// If partially successful, store the OTP code and the timestamp the OTP expires at.		
+		if ($success > 0) {			
+			if (!$this->attribute->set("twofactor","otp", array($otp, time() + $this->getConf('sentexpiry') * 60, $modname))){
+				msg("Unable to record OTP for later use.", -1);
+			}
 		}
 		return $success == 0 ? false : ($success == count($mod) ? true : $success);
+	}
+	
+	public function get_otp_code() {
+		$otpQuery = $this->attribute->get("twofactor","otp", $success);		
+		if (!$success) { return false; }
+		list($otp, $expiry, $modname) = $otpQuery;
+		if (time() > $expiry) {			
+			$this->attribute->del("twofactor","otp");
+			return false;
+		}
+		return array($otp, $modname);
 	}
 }

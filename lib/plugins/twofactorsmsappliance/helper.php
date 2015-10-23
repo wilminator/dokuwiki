@@ -1,0 +1,113 @@
+<?php
+class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
+	/** 
+	 * If the user has a valid email address in their profile, then this can be used.
+	 */
+    public function canUse($user = null){		
+		return ($this->attribute->exists("twofactorsmsappliance", "verified"));
+	}
+	
+	/**
+	 * This module can not provide authentication functionality at the main login screen.
+	 */
+    public function canAuthLogin() {
+		return false;
+	}
+		
+	/**
+	 * This user will need to supply a phone number and their cell provider.
+	 */
+    public function renderProfileForm(){
+		$elements = array();
+			// Provide an input for the phone number.			
+			$phone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
+			$elements['phone'] = form_makeTextField('phone', $phone, $this->_getSharedLang('phone'), '', 'block', array('size'=>'50'));			
+
+			// If the phone number has not been verified, then do so here.
+			if ($phone) {
+				if (!$this->attribute->exists("twofactorsmsappliance", "verified")) {
+					// Render the HTML to prompt for the verification/activation OTP.
+					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
+					$elements[] = form_makeTextField('smsappliance_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
+					$elements[] = form_makeCheckboxField('smsappliance_send', '1', $this->getLang('resendcode'),'','block');
+				}
+				// Render the element to remove the phone since it exists.
+				$elements[] = form_makeCheckboxField('smsappliance_disable', '1', $this->getLang('killmodule'), '', 'block');
+			}			
+		return $elements;
+	}
+
+	/**
+	 * Process any user configuration.
+	 */	
+    public function processProfileForm(){
+		global $INPUT;
+		if ($INPUT->bool('smsappliance_disable', false)) {
+			// Do not delete the phone number. It is shared.
+			// Delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
+			$this->attribute->delete("twofactorsmsappliance", "verified");
+			return true;
+		}
+		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
+		if ($oldphone) {
+			if ($INPUT->bool('smsappliance_send', false)) {
+				return 'otp';
+			}
+			$otp = $INPUT->str('smsappliance_verify', '');
+			if ($otp) { // The user will use SMS.
+				$checkResult = $this->processLogin($otp);
+				// If the code works, then flag this account to use SMS Gateway.
+				if ($checkResult == false) {
+					return 'failed';
+				}
+				else {
+					$this->attribute->set("twofactorsmsappliance", "verified", true);
+					return 'verified';
+				}					
+			}							
+		}
+		
+		$changed = null;		
+		$phone = $INPUT->str('phone', '');
+		if ($phone != $oldphone) {
+			if ($this->attribute->set("twofactor","phone", $phone)== false) {
+				msg("TwoFactor: Error setting phone.", -1);
+			}			
+			// Delete the verification for the phone number if it was changed.
+			$this->attribute->del("twofactorsmsappliance", "verified");
+			$changed = true;
+		}
+		
+		return $changed;
+	}	
+	
+	/**
+	 * This module can send messages.
+	 */
+	public function canTransmitMessage(){
+		return true;
+	}
+	
+	/**
+	 * Transmit the message via email to the address on file.
+	 */
+	public function transmitMessage($message, $force = false){
+		if (!$this->canUse()  && !$force) { return false; }
+		$number = $this->attribute->get("twofactor","phone", $success);
+		if (!$success) {
+			// If there is no phone number, then fail.
+			return false;
+		}
+		$url = str_replace('$phone', $number, $this->getConf('url'));
+		$url = str_replace('$msg', rawurlencode($message), $url);
+		// Deliver the message and capture the results.
+		$result = file_get_contents($url);
+		// TODO: How do we verify success?
+		return true;
+		}
+	
+	/**
+	 * 	This module uses the default authentication.
+	 */
+    //public function processLogin($code);
+}

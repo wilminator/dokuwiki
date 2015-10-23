@@ -52,7 +52,8 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 			$this->attribute->del("twofactorsmsgateway", "verified");
 			return true;
 		}
-		if (!$this->canUse()) {
+		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactore", "phone") : '';
+		if ($oldphone) {
 			if ($INPUT->bool('smsgateway_send', false)) {
 				return 'otp';
 			}
@@ -71,12 +72,12 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 		}
 		
 		$changed = null;
-		$oldphone = $this->attribute->exists("twofactor", "phone") ? $this->attribute->get("twofactor", "phone") : '';
-		$phone = $INPUT->str('smsgateway_phone', '');
+		$phone = $INPUT->str('phone', '');
 		if ($phone != $oldphone) {
 			if ($this->attribute->set("twofactor","phone", $phone)== false) {
 				msg("TwoFactor: Error setting phone.", -1);
 			}
+			msg("set");
 			// Delete the verification for the phone number if it was changed.
 			$this->attribute->del("twofactorsmsgateway", "verified");
 			$changed = true;

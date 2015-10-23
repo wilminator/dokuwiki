@@ -61,7 +61,7 @@
 !/lib/plugins/twofactoremail
 !/lib/plugins/twofactorgoogleauth
 !/lib/plugins/twofactorsmsgateway
-!/lib/plugins/twofactorappliance
+!/lib/plugins/twofactorsmsappliance
 lib/images/*/local/*
 
 # composer default ignores
