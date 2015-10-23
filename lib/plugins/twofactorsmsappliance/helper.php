@@ -74,7 +74,6 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 				if ($this->attribute->set("twofactor","phone", $phone)== false) {
 					msg("TwoFactor: Error setting phone.", -1);
 				}
-				msg("set");
 				// Delete the verification for the phone number if it was changed.
 				$this->attribute->del("twofactorsmsgateway", "verified");
 				$changed = true;

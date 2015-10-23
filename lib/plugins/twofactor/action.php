@@ -52,7 +52,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		$this->modules =array_filter($allmodules, function($obj) {return $obj->getConf('enable') == 1;});
 
 		// Sanity check.
-		msg("Number of loaded twofactor modules: ".count($this->modules));
+		#msg("Number of loaded twofactor modules: ".count($this->modules));
 		$this->success = (!$requireAttribute || ($this->attribute && $this->attribute->success)) && count($this->modules) > 0;
 		
 		// This is a check flag to verify that the user's profile is being updated.
@@ -161,13 +161,15 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Last output a field for the default module, if more than one can be used.
 			$useableMods = array();
 			foreach($this->modules as $name=>$mod) {
-				if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
+				if(!$mod->canAuthLogin() && $mod->canUse()) { 
 					$useableMods[$mod->getLang("name")] = $mod; 
 				}
 			}
-			if (count($useableMods)>0) {
-				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
-				$elements[] = form_makeListboxField('default_module', array_keys($useableMods), $defaultMod, $this->getLang('provider'), '', 'block');			 
+			// If there is more than one choice, have the user select the default.
+			if (count($useableMods) > 1) {
+				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;				
+				$twofa_form = form_makeListboxField('default_module', array_keys($useableMods), $defaultMod, $this->getLang('defaultmodule'), '', 'block');			 
+				$event->data->insertElement($pos++, $twofa_form);
 			}
 		}
     }
@@ -248,11 +250,25 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 					$changed = true;
 				}
 			}
+			// Process default module.
+			$defaultmodule = $INPUT->str('default_module', '');
+			if ($defaultmodule) {
+				$useableMods = array();
+				foreach($this->modules as $name=>$mod) {
+					if(!$mod->canAuthLogin() && $mod->canUse()) { 
+						$useableMods[$mod->getLang("name")] = $mod; 
+					}
+				}
+				if (array_key_exists($defaultmodule, $useableMods)) {
+					$this->attribute->set("twofactor", "defaultmod", $defaultmodule);
+					$changed = true;
+				}
+			}
 			// Update module settings.
 			$sendotp = null;
 			foreach ($this->modules as $name=>$mod){
 				$result = $mod->processProfileForm();
-				msg("$name: ".serialize($result));
+				#msg("$name: ".serialize($result));
 				// false:change failed  'failed':OTP failed  null: no change made
 				$changed |= $result !== false && $result !== 'failed' && $result !== null;
 				switch($result) {
@@ -342,7 +358,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 				return;
 			}
 			else { // No GA OTP was supplied.
-				msg("No OTP.");
 				// If the user has an alternative two factor configured, then allow it to be used.
 				// Otherwise fail.				
 				$useableMods = array();
@@ -351,7 +366,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 						$useableMods[] = $mod; 
 					}
 				}
-				msg("No OTP.");
 				#$useableMods = array_filter($this->modules, function ($mod) { return !$mod->canAuthLogin(); });
 				if (count($useableMods) == 0) {
 					// There is no other two factor option, and this user did not supply a GA OTP code.
@@ -411,7 +425,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$optinout === 'mandatory'); // User must participate.
 		if ($enable) {
 			// Check to see if the user has configured any module for use.
-			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
+			$useableMods = array();
+			foreach($this->modules as $name=>$mod) {
+				if(!$mod->canAuthLogin() && $mod->canUse()) { 
+					$useableMods[$mod->getLang("name")] = $mod; 
+				}
+			}
 			if (count($useableMods) == 0) {
 				// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
 				if ($this->getConf("optinout") != 'mandatory') {
@@ -440,19 +459,15 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// If a OTP has been submitted by the user, then verify the OTP.
 			// If verified, then grant clearance and continue normally.
 			$otp = $INPUT->str('otpcode');
-			$otppresent = $this->attribute->exists("twofactor","otp");
-			if ($otppresent) {
-				list($myotp, $expires, $modname) = $this->attribute->get("twofactor","otp");
-			}
 			if ($otp && !$INPUT->has('resend')) {
-				if ($otp != $myotp || time() > $expires) {
-					// The OTP is wrong or expired.  Inform the user.
-					msg($this->getLang('twofactor_invalidotp') ,-1);
-				}
-				else {
-					// The OTP was valid.  Flag past this block.
-					$this->_grant_clearance();
-					return;
+				foreach ($useableMods as $mod){
+					$result = $mod->processLogin($otp, $user);
+					msg("Checking login with ".get_class($mod)." result:".serialize($result));
+					if ($result) { 
+						// The OTP code was valid.
+						$this->_grant_clearance();
+						return;					
+					}
 				}
 			}
 			
@@ -581,7 +596,6 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		// If partially successful, store the OTP code and the timestamp the OTP expires at.		
 		if ($success > 0) {			
 			$otpData = array($otp, time() + $this->getConf('sentexpiry') * 60, $modname);
-			msg(serialize($otpData));
 			if (!$this->attribute->set("twofactor","otp", $otpData)){
 				msg("Unable to record OTP for later use.", -1);
 			}

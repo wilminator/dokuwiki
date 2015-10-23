@@ -1,0 +1,13 @@
+﻿base   twofactoraltemail
+
+author Michael Wilmes
+
+email  mwilmes@avc.edu
+
+date   2015-09-10
+
+name   twofactoraltemail plugin
+
+desc   Alternate email support plugin for the Twofactor authentication plugin.
+
+url    https://www.dokuwiki.org/plugin:twofactor

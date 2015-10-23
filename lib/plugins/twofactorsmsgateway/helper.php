@@ -78,7 +78,6 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 				if ($this->attribute->set("twofactor","phone", $phone)== false) {
 					msg("TwoFactor: Error setting phone.", -1);
 				}
-				msg("set");
 				// Delete the verification for the phone number if it was changed.
 				$this->attribute->del("twofactorsmsgateway", "verified");
 				$changed = true;
@@ -150,7 +149,7 @@ class helper_plugin_twofactorsmsgateway extends Twofactor_Auth_Module {
 		// Reset the email config in case another email gets sent.
 		$conf['htmlmail'] = $oldconf;
 		// This is here only for debugging for me for now.  My windows box can't send out emails :P
-		msg($message, 0); return true;
+		#if (!result) { msg($message, 0); return true;}
 		return $result;
 		}
 	
