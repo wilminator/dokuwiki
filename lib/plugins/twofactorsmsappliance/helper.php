@@ -4,7 +4,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
     public function canUse($user = null){		
-		return ($this->attribute->exists("twofactorsmsappliance", "verified"));
+		return ($this->attribute->exists("twofactorsmsappliance", "verified", $user));
 	}
 	
 	/**

@@ -168,7 +168,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// If there is more than one choice, have the user select the default.
 			if (count($useableMods) > 1) {
 				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;				
-				$twofa_form = form_makeListboxField('default_module', array_keys($useableMods), $defaultMod, $this->getLang('defaultmodule'), '', 'block');			 
+				$modList = array_merge(array($this->getLang('useallotp')), array_keys($useableMods));
+				$twofa_form = form_makeListboxField('default_module', $modList, $defaultMod, $this->getLang('defaultmodule'), '', 'block');			 
 				$event->data->insertElement($pos++, $twofa_form);
 			}
 		}
@@ -518,6 +519,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// directed to the profile screen to setup two factor.
 			global $ACT;
 			// Check to see if the user has configured any module for use.
+			$useableMods = array();
+			foreach($this->modules as $name=>$mod) {
+				if(!$mod->canAuthLogin() && $mod->canUse()) { 
+					$useableMods[$mod->getLang("name")] = $mod; 
+				}
+			}
 			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
 			if (count($useableMods) == 0 && $ACT == 'profile') {
 				// We are heading to the profile page because nothing is setup.  Good.
@@ -531,8 +538,15 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Ensure the OTP exists and is still valid. If we need to, send a OTP.
 			$otpQuery = $this->get_otp_code();
 			if ($otpQuery == false) {
+				$useableMods = array();
+				foreach($this->modules as $name=>$mod) {
+					if(!$mod->canAuthLogin() && $mod->canUse()) { 
+						$useableMods[$mod->getLang("name")] = $mod; 
+					}
+				}
 				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
-				$this->_send_otp($defaultMod);
+				$mod = array_key_exists($defaultMod, $useableMods) ? $useableMods[$defaultMod] : null;
+				$this->_send_otp($mod);
 			}
 
 			// Generate the form to login.
