@@ -127,7 +127,15 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 *     for verification.
 	 */
     public function processProfileForm() { return null; }    
-    
+ 
+	/**
+	 * This is called to process the user configurable portion of the module 
+	 * inside the user's profile via AJAX callback.
+	 * @return mixed - Response is specific to the request and data provided.
+	 */
+	public function process_ajax($request, &$data) { return null; }
+
+ 
 	/**
 	 * This is called to see if the module can send a message to the user.
 	 * @return bool - True if a message can be sent to the user.

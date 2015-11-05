@@ -29,6 +29,8 @@ if (!defined('DOKU_INC')) die();
  * transmit option. These options are handled by the parent module.
  */
 
+ if(!defined('DOKU_TWOFACTOR_PLUGIN_IMAGES')) define('DOKU_TWOFACTOR_PLUGIN_IMAGES',DOKU_BASE.'lib/plugins/twofactor/images/');
+
 // Load the authmod class. This will facilitate loading in child modules.
 require_once(dirname(__FILE__).'/authmod.php');
 
@@ -98,6 +100,8 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			$controller->register_hook('AUTH_LOGIN_CHECK', 'AFTER', $this, 'twofactor_after_auth_check', array());
             // Ensures the user has passed the second login after logged in or displays a challenge screen.
 			$controller->register_hook('TPL_CONTENT_DISPLAY', 'BEFORE', $this, 'twofactor_prompt_otp', array());
+			// Hook the AJAX handler so we can process twofactor in a more user-friendly manner.
+			$controller->register_hook('AJAX_CALL_UNKNOWN', 'BEFORE', $this,'twofactor_process_ajax');
         }
     }
 
@@ -129,8 +133,10 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		}
 
 		global $USERINFO;
+		/*
 		// Get the location just above the submit buttons.
-		$pos = $event->data->findElementByAttribute('type', 'submit') - 1;		
+		$pos = $event->data->findElementByAttribute('type', 'submit') - 1;	
+		//msg(print_r($event->data, true));
 		// Add the checkbox to opt in and out, only if optinout is not mandatory.
 		if ($this->getConf("optinout") != 'mandatory') {
 			$value = $optstate;
@@ -173,8 +179,54 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 				$event->data->insertElement($pos++, $twofa_form);
 			}
 		}
+		*/
+		// Create a fieldset for twofactor options.
+		$event->data->startFieldset($this->getLang('profile_label'));
+		$event->data->addElement($this->_profile_header('twofactor', $this->getLang('profile_general_label')));
+		$event->data->endFieldset();
     }
+	
+	private function _profile_header($name, $legend) {
+		return "<div class=\"option\"><img class=\"dropdown\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" /><img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" /></div>";
+	}
 
+    /**
+     * AJAX processing. Allows for twofactor to be configured without constant screen refreshes.
+     */
+    public function twofactor_process_ajax(&$event, $param) {
+		if ($event->data !== 'plugin_twofactor') {
+			return;
+		}
+		//no other ajax call handlers needed
+		$event->stopPropagation();
+		$event->preventDefault();	
+
+		$json = new JSON();		
+		
+		global $INPUT;
+		$module = $INPUT->str('mod','');		
+		if (!array_key_exists($module, $this->modules) && $module != 'twofactor') {
+			$response = null;
+		}
+		else {
+			$mod = $module != 'twofactor' ? $this->modules[$module] : $this;
+			$request = $INPUT->str('req','');
+			$data = $json->decode($INPUT->str('params'));
+			$response = $mod->process_ajax($request, $data);
+		}
+		
+		header('Content-Type: application/json');
+		echo $json->encode($response);
+		}
+		
+	/**
+	 * This is the AJAX entry point of data specific to the twofactor module itself.
+	 */
+	public function process_ajax($request, &$data) {
+		
+	}
+	
+	
     /**
      * Action process redirector.  If logging out, processes the logout
      * function.  If visiting the profile, sets a flag to confirm that the

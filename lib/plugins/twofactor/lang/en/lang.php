@@ -15,6 +15,8 @@ $lang['twofactor_killsms'] = "Disable one-time passwords to your device";
 $lang['twofactor_useallmods'] = "Resend OTP using all configured options";
 $lang['defaultmodule'] = "Default way to receive a code";
 $lang['useallotp'] = "*Use All*";
+$lang['profile_label'] = "Two Factor Authentication Setup";
+$lang['profile_general_label'] = "Common Options";
 
 $lang['btn_submit'] = "Submit";
 $lang['btn_resend'] = "Resend Code";

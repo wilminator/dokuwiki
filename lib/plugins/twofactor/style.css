@@ -30,4 +30,17 @@
 #user__manager .import_failures td.lineno {
   text-align: center;
 }
+
+#twofactor div.option {
+	width: 100%;
+	height: 24pt;	
+}
+
+#twofactor img.dropdown {
+	float: left;
+}
+
+#twofactor img.configured {
+	float: right;
+}
 /* IE won't understand but doesn't require it */
