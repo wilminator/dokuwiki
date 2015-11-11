@@ -1,6 +1,6 @@
 <?php
 $lang['name'] = 'Google Authenticator';
-$lang['enablemodule'] = "Use Google Authenticator";
+$lang['enablemodule'] = "Create Google Authenticator QR Code";
 $lang['directions'] = "Scan with Google Authenticator";
 $lang['verifymodule'] = "Enter code from Google Authenticator";
 $lang['killmodule'] = "Revoke Google Authenticator";
