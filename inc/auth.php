@@ -1079,9 +1079,15 @@ function updateprofile() {
     if(!$auth->canDo('modName')) unset($changes['name']);
     if(!$auth->canDo('modMail')) unset($changes['mail']);
     if(!$auth->canDo('modPass')) unset($changes['pass']);
+	
+	// Check for hooks registered with BEFORE AUTH_USER_CHANGE.
+	// If these are present, assume that there will be some processing that might 
+	// not be accounted for in the above capability checks.
+	global $EVENT_HANDLER;
+	$plugins = $EVENT_HANDLER->check_hook('AUTH_USER_CHANGE', 'BEFORE');
 
     // anything to do?
-    if(!count($changes)&&false) {
+    if(!count($changes) && ! $plugins) {
         msg($lang['profnochange'], -1);
         return false;
     }
