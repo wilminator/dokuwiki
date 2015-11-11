@@ -1081,7 +1081,7 @@ function updateprofile() {
     if(!$auth->canDo('modPass')) unset($changes['pass']);
 
     // anything to do?
-    if(!count($changes)) {
+    if(!count($changes)&&false) {
         msg($lang['profnochange'], -1);
         return false;
     }
