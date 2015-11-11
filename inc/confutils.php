@@ -267,6 +267,10 @@ function actionOK($action){
         global $conf;
         /** @var DokuWiki_Auth_Plugin $auth */
         global $auth;
+		// Check for hooks registered with BEFORE AUTH_USER_CHANGE.
+		// If these are present, assume that there will be some processing that might 
+		// not be accounted for in the canDo capability checks.
+		global $EVENT_HANDLER;
 
         // prepare disabled actions array and handle legacy options
         $disabled = explode(',',$conf['disableactions']);
@@ -280,7 +284,7 @@ function actionOK($action){
         if((isset($conf['subscribers']) && !$conf['subscribers']) || is_null($auth)) {
             $disabled[] = 'subscribe';
         }
-        if (is_null($auth) || !$auth->canDo('Profile')) {
+        if (is_null($auth) || (!$auth->canDo('Profile') && !$EVENT_HANDLER->check_hook('AUTH_USER_CHANGE', 'BEFORE'))) {
             $disabled[] = 'profile';
         }
         if (is_null($auth) || !$auth->canDo('delUser')) {
