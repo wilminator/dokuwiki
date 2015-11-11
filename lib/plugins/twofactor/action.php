@@ -182,12 +182,32 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		*/
 		// Create a fieldset for twofactor options.
 		$event->data->startFieldset($this->getLang('profile_label'));
-		$event->data->addElement($this->_profile_header('twofactor', $this->getLang('profile_general_label')));
+		// This sets up the CSS styles.
+		$event->data->getElementAt(-1)['id'] = 'twofactor';
+		$event->data->addElement("<div class=\"option\" onclick=\"toggle_option(this);\">");
+		$event->data->addElement("<img class=\"dropdown\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" />");
+		$event->data->addElement("<b>".$this->getLang('profile_general_label')."</b>");
+		$event->data->addElement("<img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."green.png\" />");
+		$event->data->addElement("</div>");
+		$event->data->addElement("<div class=\"settings\">");
+		$event->data->addElement("</div>");
+		foreach ($this->modules as $mod){
+			if ($mod->getConf("enable") == 1) {
+				$output = $mod->renderProfileForm();
+				foreach($output as $part) {
+					$event->data->addElement($part);
+				}
+			}
+		}
+		$event->data->addElement("<input type=\"sumbit\" name=\"".$this->getLang('save')."\" onclick=\"return twofactor_save_settings();\" />");
 		$event->data->endFieldset();
     }
 	
 	private function _profile_header($name, $legend) {
-		return "<div class=\"option\"><img class=\"dropdown\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" /><img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" /></div>";
+		$html = "<img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" />";
+		$html += "<div class=\"settings\"></div>";
+		$html += "</div>";
+		return $html;
 	}
 
     /**
