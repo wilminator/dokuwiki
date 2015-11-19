@@ -15,7 +15,7 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
 	 * The user must have verified their GA is configured correctly first.
 	 */
     public function canUse($user = null){		
-		return ($this->attribute->exists("twofactorgoogleauth", "verified", $user) && $this->getConf('enable') === 1);
+		return ($this->_settingExists("verified", $user) && $this->getConf('enable') === 1);
 	}
 	
 	/**
@@ -32,15 +32,15 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
 		global $conf,$USERINFO;
 		$elements = array();
 		$ga = new PHPGangsta_GoogleAuthenticator();			
-		if ($this->attribute->exists("twofactorgoogleauth", "secret")) { // The user has a revokable GA secret.
+		if ($this->_settingExists("secret")) { // The user has a revokable GA secret.
 			// Show the QR code so the user can add other devices.
-			$mysecret = $this->attribute->get("twofactorgoogleauth", "secret");
+			$mysecret = $this->_settingGet("secret");
 			$data = $this->generateQRCodeData($USERINFO['name'].'@'.$conf['title'], $mysecret);			
 			$elements[] = '<figure><figcaption>'.$this->getLang('directions').'</figcaption>';
 			$elements[] = '<img src="'.$data.'" alt="'.$this->getLang('directions').'" />';
 			$elements[] = '</figure>';
 			// Check to see if the user needs to verify the code.
-			if (!$this->attribute->exists("twofactorgoogleauth", "verified")){
+			if (!$this->_settingExists("verified")){
 				$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';
 				$elements[] = form_makeTextField('googleauth_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
 			}
@@ -60,13 +60,12 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
     public function processProfileForm(){
 		global $INPUT;
 		$ga = new PHPGangsta_GoogleAuthenticator();
-		$hasSecret = $this->attribute->exists("twofactorgoogleauth", "secret");
-		$oldmysecret = $hasSecret ? $this->attribute->get("twofactorgoogleauth", "secret") : null;
-		if ($hasSecret) {
+		$oldmysecret = $this->_settingGet("secret");
+		if ($oldmysecret !== null) {
 			if ($INPUT->bool('googleauth_disable', false)) {
-				$this->attribute->del("twofactorgoogleauth", "secret");
+				$this->_settingDelete("secret");
 				// Also delete the seenqrcode attribute.  Otherwise the system will still expect the user to login with GA.
-				$this->attribute->del("twofactorgoogleauth", "verified");
+				$this->_settingDelete("verified");
 				return true;
 			}
 			else {
@@ -78,7 +77,7 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
 						return 'failed';
 					}
 					else {
-						$this->attribute->set("twofactorgoogleauth", "verified", true);						
+						$this->_settingSet("verified", true);						
 						return 'verified';
 					}					
 				}
@@ -87,7 +86,7 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
 		else {
 			if ($INPUT->bool('googleauth_enable', false)) { // Only make a code if one is not set.
 				$mysecret = $ga->createSecret();
-				$this->attribute->set("twofactorgoogleauth", "secret", $mysecret);
+				$this->_settingSet("secret", $mysecret);
 				return true;
 			}
 		}
@@ -111,7 +110,7 @@ class helper_plugin_twofactorgoogleauth extends Twofactor_Auth_Module {
     public function processLogin($code, $user = null){ 
 		$ga = new PHPGangsta_GoogleAuthenticator();
 		$expiry = $this->_getSharedConfig("generatorexpiry");
-		$secret = $this->attribute->get("twofactorgoogleauth", "secret", $present, $user);		
+		$secret = $this->_settingGet("secret",'', $user);		
 		return $ga->verifyCode($secret, $code, $expiry);
 	}
 

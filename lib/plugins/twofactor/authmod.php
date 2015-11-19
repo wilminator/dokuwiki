@@ -12,7 +12,8 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	public function __construct(){
         $this->loadConfig();		
 		$this->attribute = plugin_load('helper', 'attribute');
-        $this->success = $this->attribute != null;		
+        $this->success = $this->attribute != null && strstr(get_called_class(), 'helper_plugin_');				
+		$this->moduleName = substr(get_called_class(), strlen('helper_plugin_'));
 	}
 	
     /**
@@ -127,15 +128,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	 *     for verification.
 	 */
     public function processProfileForm() { return null; }    
- 
-	/**
-	 * This is called to process the user configurable portion of the module 
-	 * inside the user's profile via AJAX callback.
-	 * @return mixed - Response is specific to the request and data provided.
-	 */
-	public function process_ajax($request, &$data) { return null; }
-
- 
+    
 	/**
 	 * This is called to see if the module can send a message to the user.
 	 * @return bool - True if a message can be sent to the user.
@@ -159,6 +152,7 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	public function processLogin($code, $user = null) {
 		$twofactor = plugin_load('action', 'twofactor');
 		$otpQuery = $twofactor->get_otp_code();
+		//msg(serialize(array($otpQuery,$code, $user)));
 		if (!$otpQuery) { return false; }
 		list($otp, $modname) = $otpQuery;
 		return ($code == $otp && $code != '' && ($modname == null || $modname == get_called_class()));
@@ -175,8 +169,8 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	}
 	
 	/**
-	 * This is a helper function to get text strings from the twofactor class 
-	 * calling this module.	 
+	 * This is a helper function to get shared configuration options from the 
+	 * twofactor class.	 
 	 * @return string - Language string from the calling class.
 	 */
 	protected function _getSharedConfig($key) {	
@@ -185,14 +179,63 @@ abstract class Twofactor_Auth_Module extends DokuWiki_Plugin {
 	}
 	
 	/**
-	 * This is a helper function to get text strings from the twofactor class 
-	 * calling this module.	 
+	 * This is a helper function to check for the existence of shared 
+	 * twofactor settings.	 
 	 * @return string - Language string from the calling class.
 	 */
-	protected function _getSharedSetting($key) {		
-		return $this->attribute->get("twofactor", $key);
+	protected function _sharedSettingExists($key) {		
+		return $this->attribute->exists("twofactor", $key);
 	}
 	
+	/**
+	 * This is a helper function to get shared twofactor settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _sharedSettingGet($key, $default = null, $user = null) {		
+		return $this->_sharedSettingExists($key) ? $this->attribute->get("twofactor", $key, $success, $user) : $default;
+	}
+
+	/**
+	 * This is a helper function to set shared twofactor settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _sharedSettingSet($key, $value) {		
+		return $this->attribute->set("twofactor", $key, $value);
+	}
+	
+	/**
+	 * This is a helper function to check for the existence of module 
+	 * specific settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _settingExists($key, $user = null) {		
+		return $this->attribute->exists($this->moduleName, $key, $user);
+	}
+	
+	/**
+	 * This is a helper function to get module specific settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _settingGet($key, $default = null, $user = null) {		
+		return $this->_settingExists($key, $user) ? $this->attribute->get($this->moduleName, $key, $success, $user) : $default;
+	}
+
+	/**
+	 * This is a helper function to set module specific settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _settingSet($key, $value) {		
+		return $this->attribute->set($this->moduleName, $key, $value);
+	}
+
+	/**
+	 * This is a helper function to delete module specific settings.	 
+	 * @return string - Language string from the calling class.
+	 */
+	protected function _settingDelete($key) {		
+		return $this->attribute->del($this->moduleName, $key);
+	}
+
 	/**
 	 * This is a helper function that lists the names of all available 
 	 * modules. 	 

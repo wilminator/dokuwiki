@@ -29,14 +29,14 @@ if (!defined('DOKU_INC')) die();
  * transmit option. These options are handled by the parent module.
  */
 
- if(!defined('DOKU_TWOFACTOR_PLUGIN_IMAGES')) define('DOKU_TWOFACTOR_PLUGIN_IMAGES',DOKU_BASE.'lib/plugins/twofactor/images/');
-
 // Load the authmod class. This will facilitate loading in child modules.
 require_once(dirname(__FILE__).'/authmod.php');
 
 class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 	public $success = false;
 	private $attribute = null;
+	private $tokenMods = null;
+	private $otpMods = null;
 
 	public function __construct() {
 		$this->loadConfig();
@@ -52,15 +52,12 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			msg('At least one loaded module did not have a properly named class.' . ' ' . implode(', ', $failed), -1);
 		}
 		$this->modules =array_filter($allmodules, function($obj) {return $obj->getConf('enable') == 1;});
+		//msg("Number of loaded twofactor modules: ".count($this->modules));
 
 		// Sanity check.
-		//msg("Number of loaded twofactor modules: ".count($this->modules));
 		$this->success = (!$requireAttribute || ($this->attribute && $this->attribute->success)) && count($this->modules) > 0;
-		
-		// This is a check flag to verify that the user's profile is being updated.
-		$this->modifyProfile = false;
-	}
-
+		}
+	
 	/**
 	 * return some info
 	 */
@@ -88,10 +85,16 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			if ($firstlogin) {
 				$controller->register_hook('HTML_LOGINFORM_OUTPUT', 'BEFORE', $this, 'twofactor_login_form', array());				
 			}
+			// Adds our twofactor profile to the user tools.
+            $controller->register_hook('TEMPLATE_USERTOOLS_DISPLAY', 'BEFORE', $this, 'twofactor_usertools_action', array());
 			// Provide user settings in profile.
-            $controller->register_hook('HTML_UPDATEPROFILEFORM_OUTPUT', 'BEFORE', $this, 'twofactor_profile_form', array());
+            //$controller->register_hook('HTML_UPDATEPROFILEFORM_OUTPUT', 'BEFORE', $this, 'twofactor_profile_form', array());
 			// Ensures we are in the user profile.
+			// Manage action flow around the twofactor authentication requirements.
             $controller->register_hook('ACTION_ACT_PREPROCESS', 'BEFORE', $this, 'twofactor_action_process_handler', array());
+			// Handle the twofactor login and profile actions.
+            $controller->register_hook('TPL_ACT_UNKNOWN', 'BEFORE', $this, 'twofactor_handle_unknown_action', array());
+            $controller->register_hook('TPL_ACTION_GET', 'BEFORE', $this, 'twofactor_get_unknown_action', array());
 			// Updates user settings. Ensures that the settings ceom from the profile using a flag passed by the above hook.
             $controller->register_hook('AUTH_USER_CHANGE', 'BEFORE', $this, 'twofactor_process_changes', array());
 			// If the user supplies a token code at login, checks it before logging the user in.
@@ -99,11 +102,16 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			// Atempts to process the second login if the user hasn't done so already.
 			$controller->register_hook('AUTH_LOGIN_CHECK', 'AFTER', $this, 'twofactor_after_auth_check', array());
             // Ensures the user has passed the second login after logged in or displays a challenge screen.
-			$controller->register_hook('TPL_CONTENT_DISPLAY', 'BEFORE', $this, 'twofactor_prompt_otp', array());
-			// Hook the AJAX handler so we can process twofactor in a more user-friendly manner.
-			$controller->register_hook('AJAX_CALL_UNKNOWN', 'BEFORE', $this,'twofactor_process_ajax');
+			//$controller->register_hook('TPL_CONTENT_DISPLAY', 'BEFORE', $this, 'twofactor_prompt_otp', array());TEMPLATE_' . strtoupper($toolsname) . '_DISPLAY
         }
     }
+	
+	public function twofactor_usertools_action(&$event, $param) {	
+		global $INPUT;	
+		if($INPUT->server->has('REMOTE_USER')&&$this->get_clearance()) {
+            array_unshift($event->data['items'], tpl_action('twofactor_profile', true, 'li', true));
+		}
+	}
 
     /**
      * Handles the login form rendering.
@@ -122,29 +130,39 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 
 		$optinout = $this->getConf("optinout");
 		$optstate = $optinout == 'mandatory' ? 'in' : ($this->attribute ? $this->attribute->get("twofactor","state") : '');
-		$available = false;
-		foreach ($this->modules as $mod) {
-			$available |= $mod->canUse();
-		}
+		$available = count($this->tokenMods) + count($this->otpMods) > 0;
 		
 		// If the user is being redirected here because of mandatory two factor, then display a message saying so.
 		if (!$available && $optinout == 'mandatory') {
 			msg($this->getLang('mandatory'), -1);
 		}
 
-		global $USERINFO;
-		/*
-		// Get the location just above the submit buttons.
-		$pos = $event->data->findElementByAttribute('type', 'submit') - 1;	
-		//msg(print_r($event->data, true));
+		global $USERINFO, $lang, $conf;
+		$form = new Doku_Form(array('id' => 'twofactor_setup'));
 		// Add the checkbox to opt in and out, only if optinout is not mandatory.
-		if ($this->getConf("optinout") != 'mandatory') {
+		$items = array();
+		if ($optinout != 'mandatory') {
 			$value = $optstate;
 			if (!$this->attribute || !$value) {  // If there is no personal setting for optin, the default is based on the wiki default.
 				$value = $this->getConf("optinout") == 'optout';
 			}
-			$twofa_form = form_makeCheckboxField('optinout', '1', $this->getLang('twofactor_optin'), '', 'block', $value=='in'?array('checked'=>'checked'):array());
-			$event->data->insertElement($pos++, $twofa_form);
+			$items[] = form_makeCheckboxField('optinout', '1', $this->getLang('twofactor_optin'), '', 'block', $value=='in'?array('checked'=>'checked'):array());
+			
+		}
+		if ($optstate == 'in') {
+			// If there is more than one choice, have the user select the default.
+			if (count($this->otpMods) > 1) {
+				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;				
+				$modList = array_merge(array($this->getLang('useallotp')), array_keys($this->otpMods));
+				$items[] = form_makeListboxField('default_module', $modList, $defaultMod, $this->getLang('defaultmodule'), '', 'block');			 				
+			}
+		}
+		if (count($items) > 0) {
+			$form->startFieldset($this->getLang('settings'));
+			foreach ($items as $item) {
+				$form->addElement($item);
+			}
+			$form->endFieldset();
 		}
 
 		// TODO: Make this AJAX so that the user does not have to keep clicking 
@@ -155,146 +173,147 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 			//echo serialize($this->modules).'<hr>';
 			foreach ($this->modules as $mod){
 				if ($mod->getConf("enable") == 1) {
-					$output = $mod->renderProfileForm();
-					//echo serialize($output).'<hr>';
-					$parts = array_merge($output, $parts);
-					//echo serialize($parts).'<hr><hr>';
-				}
-			}
-			foreach($parts as $part) {
-				$event->data->insertElement($pos++, $part);
-			}
-			// Last output a field for the default module, if more than one can be used.
-			$useableMods = array();
-			foreach($this->modules as $name=>$mod) {
-				if(!$mod->canAuthLogin() && $mod->canUse()) { 
-					$useableMods[$mod->getLang("name")] = $mod; 
-				}
-			}
-			// If there is more than one choice, have the user select the default.
-			if (count($useableMods) > 1) {
-				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;				
-				$modList = array_merge(array($this->getLang('useallotp')), array_keys($useableMods));
-				$twofa_form = form_makeListboxField('default_module', $modList, $defaultMod, $this->getLang('defaultmodule'), '', 'block');			 
-				$event->data->insertElement($pos++, $twofa_form);
-			}
-		}
-		*/
-		// Create a fieldset for twofactor options.
-		$event->data->startFieldset($this->getLang('profile_label'));
-		// This sets up the CSS styles.
-		$event->data->getElementAt(-1)['id'] = 'twofactor';
-		$event->data->addElement("<div class=\"option\" onclick=\"toggle_option(this);\">");
-		$event->data->addElement("<img class=\"dropdown\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" />");
-		$event->data->addElement("<b>".$this->getLang('profile_general_label')."</b>");
-		$event->data->addElement("<img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."green.png\" />");
-		$event->data->addElement("</div>");
-		$event->data->addElement("<div class=\"settings\">");
-		$event->data->addElement("</div>");
-		foreach ($this->modules as $mod){
-			if ($mod->getConf("enable") == 1) {
-				$output = $mod->renderProfileForm();
-				foreach($output as $part) {
-					$event->data->addElement($part);
+					$items = $mod->renderProfileForm();
+					if (count($items) > 0) {
+						$form->startFieldset($mod->getLang('name'));
+						foreach ($items as $item) {
+							$form->addElement($item);
+						}
+						$form->endFieldset();
+					}
 				}
 			}
 		}
-		$event->data->addElement("<input type=\"sumbit\" name=\"".$this->getLang('save')."\" onclick=\"return twofactor_save_settings();\" />");
-		$event->data->endFieldset();
-    }
-	
-	private function _profile_header($name, $legend) {
-		$html = "<img class=\"configured\" alt=\"$alt\" src=\"".DOKU_TWOFACTOR_PLUGIN_IMAGES."arrowrt.png\" />";
-		$html += "<div class=\"settings\"></div>";
-		$html += "</div>";
-		return $html;
-	}
+		if ($conf['profileconfirm']) {			
+			$form->addElement('<br />');
+			$form->startFieldset($this->getLang('verify_password'));
+			$form->addElement(form_makePasswordField('oldpass', $lang['oldpass'], '', 'block', array('size'=>'50', 'required' => 'required')));
+			$form->endFieldset();
+		}
+		$form->addElement('<br />');
+		$form->addElement(form_makeButton('submit', '', $lang['btn_save']));
+		$form->addElement('<a href="'.wl($ID,array('do'=>'show'),true,'&').'">'.$this->getLang('btn_return').'</a>');
+		$form->addHidden('do', 'twofactor_profile');
+		$form->addHidden('save', '1');
+		echo '<div class="centeralign">'.NL.$form->getForm().'</div>'.NL;			
+}
 
-    /**
-     * AJAX processing. Allows for twofactor to be configured without constant screen refreshes.
-     */
-    public function twofactor_process_ajax(&$event, $param) {
-		if ($event->data !== 'plugin_twofactor') {
-			return;
-		}
-		//no other ajax call handlers needed
-		$event->stopPropagation();
-		$event->preventDefault();	
-
-		$json = new JSON();		
-		
-		global $INPUT;
-		$module = $INPUT->str('mod','');		
-		if (!array_key_exists($module, $this->modules) && $module != 'twofactor') {
-			$response = null;
-		}
-		else {
-			$mod = $module != 'twofactor' ? $this->modules[$module] : $this;
-			$request = $INPUT->str('req','');
-			$data = $json->decode($INPUT->str('params'));
-			$response = $mod->process_ajax($request, $data);
-		}
-		
-		header('Content-Type: application/json');
-		echo $json->encode($response);
-		}
-		
-	/**
-	 * This is the AJAX entry point of data specific to the twofactor module itself.
-	 */
-	public function process_ajax($request, &$data) {
-		
-	}
-	
-	
     /**
      * Action process redirector.  If logging out, processes the logout
      * function.  If visiting the profile, sets a flag to confirm that the
      * profile is being viewed in order to enable OTP attribute updates.
      */
 	public function twofactor_action_process_handler(&$event, $param){
-		global $USERINFO;
+		global $USERINFO, $ID, $INFO;
+		//msg("Action: ".$event->data);
+		// Handle logout.
 		if ($event->data == 'logout') {
 			$this->_logout();
-			return true;
+			return;
 		}
-		elseif ($event->data == 'profile') {
-			return $this->_verify_in_profile($event, $param);
+		// Handle main login.
+		if ($event->data == 'login') {
+			return;
 		}
-		elseif ($this->getConf("optinout") == 'mandatory' && $this->get_clearance() == false) {
-			// Not logged in but going 'somewhere'
-			if ($event->data != 'login' && $USERINFO == null) {
-				//msg("Redirect to login");
-				// If not logged in then force to the profile page.
-				$event->preventDefault();
-				$event->stopPropagation();
+		// Check to see if we are heading to the twofactor profile.
+		if ($event->data == 'twofactor_profile') {			
+			// We will be handling this action's permissions here.
+			$event->preventDefault();
+			$event->stopPropagation();
+			// If not logged into the main auth plugin then send there.
+			if (!$USERINFO) {
 				$event->result = false;
-				global $ID;
 				send_redirect(wl($ID,array('do'=>'login'),true,'&'));
 				return;
 			}
-			if ($event->data != 'profile' && $USERINFO) {			
-				//msg("Redirect to profile...");
-				// If not logged in then force to the profile page.
+			// If not logged into twofactor then send there.
+			if (!$this->get_clearance()) {
+				$event->result = false;
+				send_redirect(wl($ID,array('do'=>'twofactor_login'),true,'&'));
+				return;
+			}
+			// Otherwise handle the action.
+			$event->result = true;
+			return;
+		}
+		// Check to see if we are heading to the twofactor login.
+		if ($event->data == 'twofactor_login') {
+			//die( "twofactor_profile in action process handler".$event->data);
+			// We will be handling this action's permissions here.
+			$event->preventDefault();
+			$event->stopPropagation();
+			// If not logged into the main auth plugin then send there.
+			if (!$USERINFO) {
+				$event->result = false;
+				send_redirect(wl($ID,array('do'=>'login'),true,'&'));
+				return;
+			}
+			// Otherwise handle the action.
+			return;
+		}		
+		// Handle mandatory authentication.
+		if ($this->getConf("optinout") == 'mandatory') {
+			// Enforce login.
+			if (!$this->get_clearance()) {			
+				if (!in_array($event->data, array('login','twofactor_login'))) {
+					//msg("Redirect to twofactor login");
+					// If not logged in then force to the profile page.
+					$event->preventDefault();
+					$event->stopPropagation();
+					$event->result = false;
+					send_redirect(wl($ID,array('do'=>'twofactor_login'),true,'&'));
+					return;
+				} 
+				// Otherwise go to where we are told.
+				return;
+			}
+			// Check to see if updating twofactor is needed.
+			$available = count($this->tokenMods) + count($this->otpMods) > 0;
+			if (!$available) {
+				//die( "mandatory in action process handler".$event->data.serialize($useable));
+				// We need to be going to the twofactor profile.
+				// If we were, we would not be here in the code.
 				$event->preventDefault();
 				$event->stopPropagation();
 				$event->result = false;
-				global $ID;
-				send_redirect(wl($ID,array('do'=>'profile'),true,'&'));
+				send_redirect(wl($ID,array('do'=>'twofactor_profile'),true,'&'));
 				return;
 			}
 		}
 		//msg(serialize(array($USERINFO, $event->data, $this->getConf("optinout"), $this->get_clearance())));
-		return true;
+		// Otherwise everything is good!
+		return;
+	}
+	
+	public function twofactor_handle_unknown_action(&$event, $param) {
+		if ($event->data == 'twofactor_profile') {
+			$event->preventDefault();
+			$event->stopPropagation();
+			$event->result = $this->twofactor_profile_form($event, $param);
+			return;
+		}
+		if ($event->data == 'twofactor_login') {
+			$event->preventDefault();
+			$event->stopPropagation();
+			$event->result = $this->twofactor_otp_login($event, $param);
+			return;
+		}
 	}
 
-    /**
-     * Sets a flag if we are working with the profile. This ensures that extra data is only updated when the profile is being worked on.
-     */
-    private function _verify_in_profile(&$event, $param) {
-		// Check if this is the condition we are trying to monitor.
-		$this->modifyProfile = $event->data == 'profile';
-		return true;
+
+	public function twofactor_get_unknown_action(&$event, $param) {		
+		switch($event->data['type']) {
+			case 'twofactor_profile':
+				//die(msg(serialize($event)));
+				$event->data['params'] = array('do' => 'twofactor_profile');
+				// Inject text into $lang.
+				global $lang;
+				$lang['btn_twofactor_profile'] = $this->getLang('btn_twofactor_profile');
+				$event->preventDefault();
+				$event->stopPropagation();
+				$event->result = false;
+				break;
+		}
 	}
 
     /**
@@ -305,6 +324,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		if ($this->attribute) {
 			$this->attribute->del("twofactor","otp");
 		}
+		//msg("Logging off.");
 		// Before we get here, the session is closed. Reopen it to logout the user.
 		if (!headers_sent()) {
             session_start();
@@ -347,102 +367,7 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		else {
 			msg("Error! You have not been logged in!!!", -1);
 		}
-		//return $_SESSION['twofactor_clearance']=true;
-	}
-
-    /**
-     * If the conditions are right, process any updates to this module's attributes.
-     */
-    function twofactor_process_changes(&$event, $param) {
-		// If the plugin is disabled, then exit.
-		if ($this->getConf("enable") !== 1 || !$this->success) { return; }
-		// If a password was required but incorrect, we would not be here.
-		// The updateprofile method would have aborted earlier.
-		// If this is a modify event, we are ok.
-		if ($event->data['type'] == 'modify' && $this->modifyProfile) {
-			$changed = false;
-			global $INPUT, $USERINFO;
-			// Process opt in/out.
-			if ($this->getConf("optinout") != 'mandatory') {
-				$oldoptinout = $this->attribute->get("twofactor","state") === 'in'?'in':'out';
-				$optinout = $INPUT->bool('optinout', false)?'in':'out';
-				if ($oldoptinout != $optinout) {
-					$this->attribute->set("twofactor","state", $optinout);
-					$changed = true;
-				}
-			}
-			// Process default module.
-			$defaultmodule = $INPUT->str('default_module', '');
-			if ($defaultmodule) {
-				$useableMods = array();
-				foreach($this->modules as $name=>$mod) {
-					if(!$mod->canAuthLogin() && $mod->canUse()) { 
-						$useableMods[$mod->getLang("name")] = $mod; 
-					}
-				}
-				if (array_key_exists($defaultmodule, $useableMods)) {
-					$this->attribute->set("twofactor", "defaultmod", $defaultmodule);
-					$changed = true;
-				}
-			}
-			// Update module settings.
-			$sendotp = null;
-			foreach ($this->modules as $name=>$mod){
-				$result = $mod->processProfileForm();
-				//msg("$name: ".serialize($result));
-				// false:change failed  'failed':OTP failed  null: no change made
-				$changed |= $result !== false && $result !== 'failed' && $result !== null;
-				switch((string)$result) {
-					case 'verified':
-						// Remove used OTP.
-						$this->attribute->del("twofactor","otp");
-						msg($mod->getLang('passedsetup'), 1);
-						// The OTP was valid.  Clear the login so the user can continue unbothered.
-						$this->_grant_clearance();						
-						break;
-					case 'failed':
-						msg($mod->getLang('failedsetup'), -1);
-						break;
-					case 'otp':
-						if (!$sendotp) {
-							$sendotp = $mod;							
-						}						
-				}
-			}
-			// Send OTP if requested.
-			if ($sendotp) {
-				// Force the message since it will fail the canUse function.				
-				if ($this->_send_otp($sendotp, true)) {
-					msg($sendotp->getLang('needsetup'), 1);
-				}
-				else {
-					msg("Could not send message using ".get_class($sendotp),-1);
-				}
-			}
-
-			// Update change status if changed.
-			//msg(serialize($changed));
-			if ($changed) {
-				msg($this->getLang('updated'), 1);
-				// If there are no functioning two factor options and two factor is mandatory, then revoke the login.				
-				$available = false;
-				foreach ($this->modules as $mod) {
-					$available |= $mod->canUse();
-				}
-				//msg(serialize(array($this->getConf("optinout"), $available, $this->get_clearance())));
-				if ($this->getConf("optinout") == 'mandatory' && !$available && $this->get_clearance()) {
-					//msg("Force logging out");
-					$this->_logout();
-				}
-				// TODO: get the profile page to return if any two factor changes are made.
-				$event->preventDefault();
-				$event->stopPropagation();
-				$event->result = false;
-				global $ID;
-				send_redirect(wl($ID,array('do'=>'profile'),true,'&'));
-			}
-		}
-		return ;
+		return $_SESSION[DOKU_COOKIE]['twofactor_clearance']==true;
 	}
 
     /**
@@ -452,89 +377,69 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
     function twofactor_before_auth_check(&$event, $param) {
 		global $ACT, $INPUT;
 		
-		// If two factor is disabled, then there is nothing to do here.
-		if ($this->getConf("enable") !== 1) return; 
-		
 		// Only operate if this is a login.
-		//if ($ACT !== 'login') return;
+		if ($ACT !== 'login') {	return;	}
 		
 		// If there is no supplied username, then there is nothing to check at this time.
 		if (!$event->data['user']) { return; }
 		
-		$user = $_SERVER['REMOTE_USER'] != '' ? $_SERVER['REMOTE_USER'] : $event->data['user'];
+		$user = $INPUT->server->str('REMOTE_USER', $event->data['user']);
+
+		// Set helper variables here.
+		$this->_setHelperVariables($user);
+
 		// If there is no active user name, then purge our two factor clearance token.
-		if ($_SERVER['REMOTE_USER'] == '') {
+		if ($INPUT->server->str('REMOTE_USER', '') == '') {
 			$this->_logout();
 		}
 
 		// If the user still has clearance, then we can skip this.		
 		if ($this->get_clearance()) { return; }
 		
-		$workingMods = array();
-		foreach($this->modules as $name=>$mod) {
-			if($mod->canAuthLogin() && $mod->canUse($user)) { 
-				$workingMods[] = $mod; 
-			}
-		}
-		if (count($workingMods) > 0 && $user) {  
-			$otp = $INPUT->str('otp','');
-			if ($otp) {
-				// Check for any modules that support OTP at login and are ready for use.
-				foreach ($workingMods as $mod){
-					$result = $mod->processLogin($otp, $user);
-					//msg("Checking login with ".get_class($mod)." result:".serialize($result));
-					if ($result) { 
-						// The OTP code was valid.
-						$this->_grant_clearance();
-						return;					
-					}
+		// Allow the user to try to use login tokens, even if the account cannot use them.
+		$otp = $INPUT->str('otp','');
+		if ($otp !== '') {  
+			// Check for any modules that support OTP at login and are ready for use.
+			foreach ($this->tokenMods as $mod){
+				$result = $mod->processLogin($otp, $user);
+				//msg("Checking login with ".get_class($mod)." result:".serialize($result));
+				if ($result) { 
+					// The OTP code was valid.
+					$this->_grant_clearance();
+					return;					
 				}
-				global $lang;
-				msg($lang['badlogin'], -1);
-				$event->preventDefault();
-				return;
 			}
-			else { // No GA OTP was supplied.
-				// If the user has an alternative two factor configured, then allow it to be used.
-				// Otherwise fail.				
-				$useableMods = array();
-				foreach($this->modules as $name=>$mod) {
-					if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
-						$useableMods[] = $mod; 
-					}
-				}
-				#$useableMods = array_filter($this->modules, function ($mod) { return !$mod->canAuthLogin(); });
-				if (count($useableMods) == 0) {
-					// There is no other two factor option, and this user did not supply a GA OTP code.
-					// Revoke the logon.
-					msg($this->getLang('mustusetoken'), -1);
-					$event->preventDefault();
-					return;
-				}
-			}					
+			global $lang;
+			msg($lang['badlogin'], -1);
+			$event->preventDefault();
+			return;
 		}
-		
-		// Check to see if the user has configured any module for use.
-		$useableMods = array();
-		foreach($this->modules as $name=>$mod) {
-			if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
-				$useableMods[] = $mod; 
-			}
-		}
-		if (count($useableMods) == 0) {
-			// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
-			if ($this->getConf("optinout") != 'mandatory') {
-				//There is no two factor configured for this user and it is not mandatory. Give clearance.
-				//msg("Granting defacto login.");
-				$this->_grant_clearance();
-			}				
-			if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
-				return;
-			}
-			// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
-			//msg("twofactor_before_auth_check sending to profile.");
-			$ACT = 'profile';
+
+		// No GA OTP was supplied.
+		// If the user has no modules available, then grant access.
+		// The action preprocessing will send the user to the profile if needed.
+		$available = count($this->tokenMods) + count($this->otpMods) > 0;
+		if (!$available) {
+			//msg("No working modules found.");
+			$this->_grant_clearance();
+			global $ACT;
+			$ACT = 'show';
+			//send_redirect(wl($ID,array('do'=>'show'),true,'&'));
+			return;
 		}		
+		
+		// At this point, the user has a working module.
+		// If the only working module is for a token, then fail.
+		if (count($this->otpMods) == 0) {
+			die("Must use token.");
+			msg($this->getLang('mustusetoken'), -1);
+			$event->preventDefault();
+			return;
+		}
+		// The user is logged in to auth, but not into twofactor.  
+		// The redirection handler will send the user to the twofactor login.
+		//die("Needs two factor");
+		return;
     }
 
     /**
@@ -542,169 +447,202 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
      * @param $param
      */
     function twofactor_after_auth_check(&$event, $param) {
-		// If two factor is disabled, then there is nothing to do here.
-		if ($this->getConf("enable") !== 1) return; 
+		global $ACT;
+
+		// Update helper variables here since we are logged in.
+		$this->_setHelperVariables();
+
+		if ($ACT == 'twofactor_login') {
+			//msg("Processing otp");
+			$this->_process_otp($event, $param);
+		}
+		if ($ACT == 'twofactor_profile') {
+			//msg("Processing profile");
+			$this->_process_changes($event, $param);
+		}
 		
-		// Skip this if not logged in or already two factor authenticated.
-		$twofactor = $this->get_clearance();
-		if ($_SERVER['REMOTE_USER'] == '' || $twofactor === true) { return; }
+	}
+	
+	
+	private function _process_otp(&$event, $param) {	
+		global $ACT, $ID, $INPUT;
+		
+		// See if the user is quitting OTP.  We don't call it logoff because we don't want the user to think they are logged in!
+		// This has to be checked before the template is started.
+		if ($INPUT->has('otpquit')) {
+			// Redirect to logout.
+			//send_redirect(wl($ID,array('do'=>'logout'),true,'&'));
+			$ACT = 'logout';
+			return;
+		}
 
-		global $INPUT, $ACT;
-		// If the user is trying to logout, then we will allow this.
-		if ($ACT == 'logout') { return; }
+		// Check if the user asked to generate and resend the OTP.
+		if ($INPUT->has('resend')) {
+			if	($INPUT->has('useall')) {
+				$defaultMod = null;
+			}
+			else {
+				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
+			}
+			// At this point, try to send the OTP.
+			//msg(serialize($defaultMod));
+			$mod = array_key_exists($defaultMod, $this->otpMods) ? $this->otpMods[$defaultMod] : null;
+			$this->_send_otp($mod);
+			return;
+		}
 
-		$optinout = $this->getConf("optinout");
-		$optstate = $this->attribute ? $this->attribute->get("twofactor","state") : '';
-		$enable = $this->getConf("enable") && // The module is enabled AND...
-			((!$optinout === 'optin' || $optstate === 'in') // Opt-in is off OR the user has opted in
-			|| // OR...
-			($optinout === 'optout' && $optstate !== 'out') // Opt-out is on AND the user has not opted out
-			|| // OR...
-			$optinout === 'mandatory'); // User must participate.
-		if ($enable) {
-			// Check to see if the user has configured any module for use.
+		// If a OTP has been submitted by the user, then verify the OTP.
+		// If verified, then grant clearance and continue normally.
+		$otp = $INPUT->str('otpcode');
+		$user = $INPUT->server->str('REMOTE_USER');
+		//msg(serialize(array($otp, $user)));
+		if ($otp) {
+			foreach ($this->otpMods as $mod){
+				$result = $mod->processLogin($otp);
+				//msg("Checking login with ".get_class($mod)." result:".serialize($result));
+				if ($result) { 
+					// The OTP code was valid.
+					$this->_grant_clearance();
+					//send_redirect(wl($ID,array('do'=>'show'),true,'&'));
+					$ACT = 'show';
+					return;					
+				}
+			}
+		}
+		
+	}
+	
+    /**
+     * Process any updates to two factor settings.
+     */
+    private function _process_changes(&$event, $param) {
+		// If the plugin is disabled, then exit.
+		//msg("Processing profile.");
+
+		$changed = false;
+		global $INPUT, $USERINFO, $conf, $auth, $lang, $ACT;
+
+		if (!$INPUT->has('save')) {	return;	}
+		
+		// In needed, verify password.
+		if($conf['profileconfirm']) {
+			if(!$auth->checkPass($INPUT->server->str('REMOTE_USER'), $INPUT->post->str('oldpass'))) {
+				msg($lang['badpassconfirm'], -1);
+				return;
+			}
+		}
+
+		// Process opt in/out.
+		if ($this->getConf("optinout") != 'mandatory') {
+			$oldoptinout = $this->attribute->get("twofactor","state") === 'in'?'in':'out';
+			$optinout = $INPUT->bool('optinout', false)?'in':'out';
+			if ($oldoptinout != $optinout) {
+				$this->attribute->set("twofactor","state", $optinout);
+				$changed = true;
+			}
+		}
+
+		// Process default module.
+		$defaultmodule = $INPUT->str('default_module', '');
+		if ($defaultmodule) {
 			$useableMods = array();
 			foreach($this->modules as $name=>$mod) {
 				if(!$mod->canAuthLogin() && $mod->canUse()) { 
 					$useableMods[$mod->getLang("name")] = $mod; 
 				}
 			}
-			if (count($useableMods) == 0) {
-				// If the user has not configured either option and two factor is not mandatory, then grant clearance.				
-				if ($this->getConf("optinout") != 'mandatory') {
-					//There is no two factor configured for this user and it is not mandatory. Give clearance.
-					$this->_grant_clearance();
-					return;
-				}	
-				if ($ACT == 'admin') { // If heading to the admin page, bypass. The user can't use two factor but is trying to admin the site.
-					return;
-				}
-				if ($ACT != 'profile') {
-					// Otherwise this is mandatory.  Stop the default action, and set ACT to profile so the user can configure their two factor.
-					//msg("twofactor_after_auth_check sending to profile.");
-					$ACT = 'profile';
-				}
-				return;
-			}		
-			
-			// See if the user is quitting OTP.  We don't call it logoff because we don't want the user to think they are logged in!
-			// This has to be checked before the template is started.
-			if ($INPUT->has('otpquit')) {
-				// Redirect to logoff.
-				//$event->preventDefault();
-				$event->stopPropagation();
-				$ACT = 'logout';
-				return;
-			}
-
-			// If a OTP has been submitted by the user, then verify the OTP.
-			// If verified, then grant clearance and continue normally.
-			$otp = $INPUT->str('otpcode');
-			if ($otp && !$INPUT->has('resend')) {
-				foreach ($useableMods as $mod){
-					$result = $mod->processLogin($otp, $user);
-					//msg("Checking login with ".get_class($mod)." result:".serialize($result));
-					if ($result) { 
-						// The OTP code was valid.
-						$this->_grant_clearance();
-						return;					
-					}
-				}
-			}
-			
-			// Check if the user asked to generate and resend the OTP.
-			if ($INPUT->has('resend')) {
-				if	($INPUT->has('useall')) {
-					$defaultMod = null;
-				}
-				else {
-					$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
-				}
-				// At this point, try to send the OTP.
-				$this->_send_otp($defaultMod);
+			if (array_key_exists($defaultmodule, $useableMods)) {
+				$this->attribute->set("twofactor", "defaultmod", $defaultmodule);
+				$changed = true;
 			}
 		}
+		// Update module settings.
+		$sendotp = null;
+		foreach ($this->modules as $name=>$mod){
+			$result = $mod->processProfileForm();
+			//msg("$name: ".serialize($result));
+			// false:change failed  'failed':OTP failed  null: no change made
+			$changed |= $result !== false && $result !== 'failed' && $result !== null;
+			switch((string)$result) {
+				case 'verified':
+					// Remove used OTP.
+					$this->attribute->del("twofactor","otp");
+					msg($mod->getLang('passedsetup'), 1);
+					// The OTP was valid.  Clear the login so the user can continue unbothered.
+					$this->_grant_clearance();						
+					// Reset helper variables.
+					$this->_setHelperVariables();
+					break;
+				case 'failed':
+					msg($mod->getLang('failedsetup'), -1);
+					break;
+				case 'otp':
+					if (!$sendotp) {
+						$sendotp = $mod;							
+					}						
+					break;
+				case 'deleted':
+					// Reset helper variables.
+					$this->_setHelperVariables();
+					break;
+			}
+		}
+		// Send OTP if requested.
+		if ($sendotp) {
+			// Force the message since it will fail the canUse function.				
+			if ($this->_send_otp($sendotp, true)) {
+				msg($sendotp->getLang('needsetup'), 1);
+			}
+			else {
+				msg("Could not send message using ".get_class($sendotp),-1);
+			}
+		}
+
+		// Update change status if changed.
+		//msg(serialize($changed));
+		if ($changed) {
+			msg($this->getLang('updated'), 1);
+		}
+		return ;
 	}
-	
+
 	/**
      * Handles the email and text OTP options.
 	 * NOTE: The user will be technically logged in at this point.  This module will rewrite the
 	 * page with the prompt for the OTP until validated or the user logs out.
      */
-    function twofactor_prompt_otp(&$event, $param) {
+    function twofactor_otp_login(&$event, $param) {
 		// Skip this if not logged in or already two factor authenticated.
-		$twofactor = $this->get_clearance();
-		if ($_SERVER['REMOTE_USER'] == '' || $twofactor === true) { return; }
-		
-		// If the user is logging out, don't stop them.
-		global $ACT;
-		if ($ACT == 'logoff') { return; }
-		
-		// Setup some availability variables.
-		$optinout = $this->getConf("optinout");
-		$optstate = $this->attribute ? $this->attribute->get("twofactor","state") : '';
-		$enable = $this->getConf("enable") && // The module is enabled AND...
-			((!$optinout === 'optin' || $optstate === 'in') // Opt-in is off OR the user has opted in
-			|| // OR...
-			($optinout === 'optout' && $optstate !== 'out')) // Opt-out is on AND the user has not opted out
-			|| // OR...
-			$optinout === 'mandatory'; // User must participate.
-		if ($enable){ // User logged in, two factor required, but not completed.
+		//msg(serialize($event));
 
-			// If we are here, the user has configured some sort two factor 
-			// mechanism.  At a minimum, if they had login authentication 
-			// setup but not OTP, then their login would have failed.
-			// That means that we will try to process the login via OTP.
-			// If the user cannot sign in using OTP, see if they need to be 
-			// directed to the profile screen to setup two factor.
-			global $ACT;
-			// Check to see if the user has configured any module for use.
+		// Ensure the OTP exists and is still valid. If we need to, send a OTP.
+		$otpQuery = $this->get_otp_code();
+		if ($otpQuery == false) {
 			$useableMods = array();
 			foreach($this->modules as $name=>$mod) {
 				if(!$mod->canAuthLogin() && $mod->canUse()) { 
 					$useableMods[$mod->getLang("name")] = $mod; 
 				}
 			}
-			$useableMods = array_filter($this->modules, function ($mod) { return $mod->canUse(); });
-			if (count($useableMods) == 0 && $ACT == 'profile') {
-				// We are heading to the profile page because nothing is setup.  Good.
-				return;
-			}
-			
-			if ($ACT == 'admin') { // In case we are heading to the admin page to fix something, bypass.
-				return;
-			}
-			
-			// Ensure the OTP exists and is still valid. If we need to, send a OTP.
-			$otpQuery = $this->get_otp_code();
-			if ($otpQuery == false) {
-				$useableMods = array();
-				foreach($this->modules as $name=>$mod) {
-					if(!$mod->canAuthLogin() && $mod->canUse()) { 
-						$useableMods[$mod->getLang("name")] = $mod; 
-					}
-				}
-				$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
-				$mod = array_key_exists($defaultMod, $useableMods) ? $useableMods[$defaultMod] : null;
-				$this->_send_otp($mod);
-			}
-
-			// Generate the form to login.
-			// If we are here, then only provide options to accept the OTP or to logout.		
-    		global $lang;
-			$form = new Doku_Form(array('id' => 'otp_setup'));
-			$form->startFieldset($this->getLang('twofactor_otplogin'));
-			$form->addElement(form_makeTextField('otpcode', '', $this->getLang('twofactor_otplogin'), '', 'block', array('size'=>'50', 'autocomplete'=>'off')));
-			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_submit')));
-			$form->addElement(form_makeTag('br'));
-			$form->addElement(form_makeCheckboxField('useall', '1', $this->getLang('twofactor_useallmods'), '', 'block'));
-			$form->addElement(form_makeTag('br'));
-			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_resend'), array('name'=>'resend')));
-			$form->addElement(form_makeButton('submit', '', $this->getLang('btn_quit'), array('name'=>'otpquit')));
-			$form->endFieldset();
-			$output = '<div class="centeralign">'.NL.$form->getForm().'</div>'.NL;
-			$event->data = '<div class="centeralign">'.NL.$form->getForm().'</div>'.NL;
+			$defaultMod = $this->attribute->exists("twofactor","defaultmod") ? $this->attribute->get("twofactor","defaultmod") : null;
+			$mod = array_key_exists($defaultMod, $useableMods) ? $useableMods[$defaultMod] : null;
+			$this->_send_otp($mod);
 		}
+
+		// Generate the form to login.
+		// If we are here, then only provide options to accept the OTP or to logout.		
+		global $lang;
+		$form = new Doku_Form(array('id' => 'otp_setup'));
+		$form->startFieldset($this->getLang('twofactor_otplogin'));
+		$form->addElement(form_makeTextField('otpcode', '', $this->getLang('twofactor_otplogin'), '', 'block', array('size'=>'50', 'autocomplete'=>'off')));
+		$form->addElement(form_makeButton('submit', '', $this->getLang('btn_login')));
+		$form->addElement(form_makeTag('br'));
+		$form->addElement(form_makeCheckboxField('useall', '1', $this->getLang('twofactor_useallmods'), '', 'block'));
+		$form->addElement(form_makeTag('br'));
+		$form->addElement(form_makeButton('submit', '', $this->getLang('btn_resend'), array('name'=>'resend')));
+		$form->addElement(form_makeButton('submit', '', $this->getLang('btn_quit'), array('name'=>'otpquit')));
+		$form->endFieldset();
+		echo '<div class="centeralign">'.NL.$form->getForm().'</div>'.NL;			
     }
 
     /**
@@ -719,13 +657,14 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
      */
     private function _send_otp($module = null,$force = false) {
 		if ($module === null) {			
-			$module = array_filter($this->modules, function ($x){ return $x->canUse(); });
+			$module = $this->otpMods;
 		}
-		if (!is_array($module)) {			
+		if (!is_array($module)) {
+			$modname = get_class($module);
 			$module = array($module);
 		}		
-		if (count($module)==1) {
-			$modname = get_class($module[0]);
+		if (count($module)==1) {			
+			$modname = get_class($module[array_keys($module)[0]]);			
 		} 
 		else {
 			$modname = null;
@@ -767,4 +706,26 @@ class action_plugin_twofactor extends DokuWiki_Action_Plugin {
 		}
 		return array($otp, $modname);
 	}
+
+	private function _setHelperVariables($user = null) {
+		// List all working token modules (GA, RSA, etc.).
+		$tokenMods = array();
+		foreach($this->modules as $name=>$mod) {
+			if($mod->canAuthLogin() && $mod->canUse($user)) { 
+				$tokenMods[$mod->getLang("name")] = $mod; 
+			}
+		}
+		$this->tokenMods = $tokenMods;
+		//msg("Number of working token modules: ".count($this->tokenMods));
+		// List all working OTP modules (SMS, Twilio, etc.).
+		$otpMods = array();
+		foreach($this->modules as $name=>$mod) {
+			if(!$mod->canAuthLogin() && $mod->canUse($user)) { 
+				$otpMods[$mod->getLang("name")] = $mod; 
+			}
+		}
+		$this->otpMods = $otpMods;
+		//msg("Number of working otp modules: ".count($this->otpMods));
+	}	
+	
 }

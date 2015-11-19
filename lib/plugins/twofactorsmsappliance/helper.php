@@ -4,7 +4,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	 * If the user has a valid email address in their profile, then this can be used.
 	 */
     public function canUse($user = null){		
-		return ($this->attribute->exists("twofactorsmsappliance", "verified", $user));
+		return ($this->_settingExists("verified", $user));
 	}
 	
 	/**
@@ -20,12 +20,12 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
     public function renderProfileForm(){
 		$elements = array();
 			// Provide an input for the phone number.			
-			$phone = $this->attribute->exists("twofactorsmsappliance", "phone") ? $this->attribute->get("twofactorsmsappliance", "phone") : '';
+			$phone = $this->_settingGet("phone", '');
 			$elements[] = form_makeTextField('smsappliance_phone', $phone, $this->getLang('phone'), '', 'block', array('size'=>'50'));			
 
 			// If the phone number has not been verified, then do so here.
 			if ($phone) {
-				if (!$this->attribute->exists("twofactorsmsappliance", "verified")) {
+				if (!$this->_settingExists("verified")) {
 					// Render the HTML to prompt for the verification/activation OTP.
 					$elements[] = '<span>'.$this->getLang('verifynotice').'</span>';				
 					$elements[] = form_makeTextField('smsappliance_verify', '', $this->getLang('verifymodule'), '', 'block', array('size'=>'50', 'autocomplete'=>'off'));
@@ -42,14 +42,16 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	 */	
     public function processProfileForm(){
 		global $INPUT;
-		if ($INPUT->bool('smsappliance_disable', false) || $INPUT->str('smsappliance_phone', '') === '') {
+		$phone = $INPUT->str('smsappliance_phone', '');
+		//msg($phone);
+		if ($INPUT->bool('smsappliance_disable', false) || $phone === '') {
 			// Delete the phone number.
-			$this->attribute->del("twofactorsmsappliance", "phone");
+			$this->_settingDelete("phone");
 			// Delete the verified setting.  Otherwise the system will still expect the user to login with OTP.
-			$this->attribute->del("twofactorsmsappliance", "verified");
+			$this->_settingDelete("verified");
 			return true;
 		}
-		$oldphone = $this->attribute->exists("twofactorsmsappliance", "phone") ? $this->attribute->get("twofactorsmsappliance", "phone") : '';
+		$oldphone = $this->_settingGet("phone", '');
 		if ($oldphone) {
 			if ($INPUT->bool('smsappliance_send', false)) {
 				return 'otp';
@@ -62,27 +64,26 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 					return 'failed';
 				}
 				else {
-					$this->attribute->set("twofactorsmsappliance", "verified", true);
+					$this->_settingSet("verified", true);
 					return 'verified';
 				}					
 			}							
 		}
 		
-		$changed = null;		
-		$phone = $INPUT->str('smsappliance_phone', '');
+		$changed = null;				
 		if (preg_match('/^[0-9]{5,}$/',$phone) != false) { 
 			if ($phone != $oldphone) {
-				if ($this->attribute->set("twofactorsmsappliance","phone", $phone)== false) {
+				if ($this->_settingSet("phone", $phone)== false) {
 					msg("TwoFactor: Error setting phone.", -1);
 				}
 				// Delete the verification for the phone number if it was changed.
-				$this->attribute->del("twofactorsmsgateway", "verified");
-				$changed = true;
+				$this->_settingDelete("verified");
+				return 'deleted';
 			}
 		}
 		
 		// If the data changed and we have everything needed to use this module, send an otp.
-		if ($changed === true && $this->attribute->exists("twofactorsmsappliance", "phone")) {
+		if ($changed === true && $this->_settingExists("phone")) {
 			$changed = 'otp';
 		}		
 		return $changed;
@@ -100,7 +101,7 @@ class helper_plugin_twofactorsmsappliance extends Twofactor_Auth_Module {
 	 */
 	public function transmitMessage($message, $force = false){		
 		if (!$this->canUse()  && !$force) { return false; }
-		$number = $this->attribute->get("twofactorsmsappliance","phone", $success);
+		$number = $this->_settingGet("phone", null);
 		if (!$number) {
 			// If there is no phone number, then fail.
 			return false;

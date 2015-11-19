@@ -31,21 +31,11 @@
   text-align: center;
 }
 
-#twofactor div.option {
-	width: 100%;	
-	height: 24px;
-	border: 1px solid gray;
-	vertical-align: middle;
-	text-align: center;
+#dokuwiki__usertools a.action.twofactor_profile {
+  background-position: left -32px;
 }
 
-#twofactor img.dropdown {
-	float: left;
-	margin: 100% 0%;
-}
-
-#twofactor img.configured {
-	float: right;
-	height: 24px;
+[dir=rtl] #dokuwiki__usertools a.action.twofactor_profile {
+  background-position: right -32px;
 }
 /* IE won't understand but doesn't require it */
