@@ -15,4 +15,3 @@ $lang['expirywarn']         = 'Days in advance to warn user about expiring passw
 $lang['additional']         = 'A comma separated list of additional AD attributes to fetch from user data. Used by some plugins.';
 $lang['update_name']        = 'Allow users to update their AD display name?';
 $lang['update_mail']        = 'Allow users to update their email address?';
-$lang['allow_profile']      = 'Allow the profile to be accessed, even if the user cannot make any changes?';

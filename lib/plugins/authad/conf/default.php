@@ -15,4 +15,3 @@ $conf['expirywarn']         = 0;
 $conf['additional']         = '';
 $conf['update_name']        = 0;
 $conf['update_mail']        = 0;
-$conf['allow_profile']      = 0;
