@@ -216,18 +216,6 @@ class Doku_Event_Handler {
             }
         }
     }
-
-	/*
-     * check if a hook has been registered for an event
-     *
-     * @param  string   $event   string   name used by the event, (incl '_before' or '_after' for triggers)
-     * @param  string   $advise
-	 * @return boolean           returns true if any hooks have been registered for the specified event,
-	 *                           false otherwise.
-     */
-    function check_hook($event, $advise) {
-        return isset($this->_hooks[$event.'_'.$advise]) && count($this->_hooks[$event.'_'.$advise]) > 0;
-    }
 }
 
 /**
