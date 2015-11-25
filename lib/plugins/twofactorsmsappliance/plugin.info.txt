@@ -1,4 +1,4 @@
-﻿base   attribute
+﻿base   twofactorsmsappliance
 
 author Michael Wilmes
 
@@ -6,8 +6,8 @@ email  mwilmes@avc.edu
 
 date   2015-09-10
 
-name   attribute plugin
+name   twofactorsmsappliance plugin
 
-desc   Arbitrary attribute definition and storage for user associated data.
+desc   SMS appliance support plugin for the Twofactor authentication plugin.
 
 url    https://www.dokuwiki.org/plugin:attribute
