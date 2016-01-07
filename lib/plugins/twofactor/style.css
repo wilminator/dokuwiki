@@ -1,33 +1,33 @@
-/* Twofactor specific styles */
-#twofactor__manager tr.disabled {
+/* User Manager specific styles */
+#user__manager tr.disabled {
   color: #6f6f6f;
   background: #e4e4e4;
 }
-#twofactor__manager tr.user_info {
+#user__manager tr.user_info {
   vertical-align: top;
 }
-#twofactor__manager div.edit_user {
+#user__manager div.edit_user {
   width: 46%;
   float: left;
 }
-#twofactor__manager table {
+#user__manager table {
   margin-bottom: 1em;
 }
-#twofactor__manager ul.notes {
+#user__manager ul.notes {
   padding-left: 0;
   padding-right: 1.4em;
 }
-#twofactor__manager button[disabled] {
+#user__manager button[disabled] {
   color: #ccc!important;
   border-color: #ccc!important;
 }
-#twofactor__manager .import_users {
+#user__manager .import_users {
   margin-top: 1.4em;
 }
-#twofactor__manager .import_failures {
+#user__manager .import_failures {
   margin-top: 1.4em;
 }
-#twofactor__manager .import_failures td.lineno {
+#user__manager .import_failures td.lineno {
   text-align: center;
 }
 
@@ -38,22 +38,4 @@
 [dir=rtl] #dokuwiki__usertools a.action.twofactor_profile {
   background-position: right -32px;
 }
-
-#twofactor div.option {
-	width: 100%;	
-	height: 24px;
-	border: 1px solid gray;
-	vertical-align: middle;
-	text-align: center;
-}
-
-#twofactor img.dropdown {
-	float: left;
-	margin: 100% 0%;
-}
-
-#twofactor img.configured {
-	float: right;
-	height: 24px;
-}
-
+/* IE won't understand but doesn't require it */

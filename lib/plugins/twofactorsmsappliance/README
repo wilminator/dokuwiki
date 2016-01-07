@@ -1,12 +1,12 @@
-﻿attribute Plugin for DokuWiki
+﻿twofactorsmsappliance Plugin for DokuWiki
 
-Arbitrary attribute definition and storage for user associated data.
+SMS appliance support plugin for the Twofactor authentication plugin.
 
 All documentation for this plugin can be found at
-https://www.dokuwiki.org/plugin:attribute
+https://www.dokuwiki.org/plugin:twofactorsmsappliance
 
 If you install this plugin manually, make sure it is installed in
-lib/plugins/attribute/ - if the folder is called different it
+lib/plugins/twofactorsmsappliance/ - if the folder is called different it
 will not work!
 
 Please refer to http://www.dokuwiki.org/plugins for additional info

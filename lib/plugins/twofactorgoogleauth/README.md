@@ -1,4 +1,4 @@
-# attribute
-Arbitrary attribute definition and storage for user associated data.
+# twofactorgoogleauth
+Google Authenticator support plugin for the Twofactor authentication plugin.
 
-See detail on: https://www.dokuwiki.org/plugin:attribute
+See detail on: https://www.dokuwiki.org/plugin:twofactorgoogleauth

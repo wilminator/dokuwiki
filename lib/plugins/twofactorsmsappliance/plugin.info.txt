@@ -1,13 +1,7 @@
 ﻿base   twofactorsmsappliance
-
 author Michael Wilmes
-
 email  mwilmes@avc.edu
-
-date   2015-09-10
-
-name   twofactorsmsappliance plugin
-
+date   2016-01-06
+name   Two Factor Authentication - SMS Appliance Plugin
 desc   SMS appliance support plugin for the Twofactor authentication plugin.
-
-url    https://www.dokuwiki.org/plugin:attribute
+url    https://www.dokuwiki.org/plugin:twofactorsmsappliance
