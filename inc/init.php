@@ -149,9 +149,8 @@ if(!headers_sent() && !defined('NOSESSION')) {
     }
     if(!defined('DOKU_SESSION_DOMAIN'))   define ('DOKU_SESSION_DOMAIN', '');
 
-    session_name(DOKU_SESSION_NAME);
-    session_set_cookie_params(DOKU_SESSION_LIFETIME, DOKU_SESSION_PATH, DOKU_SESSION_DOMAIN, ($conf['securecookie'] && is_ssl()), true);
-    session_start();
+    // start the session
+    init_session();
 
     // load left over messages
     if(isset($_SESSION[DOKU_COOKIE]['msg'])) {
@@ -195,10 +194,12 @@ require_once(DOKU_INC.'vendor/autoload.php');
 require_once(DOKU_INC.'inc/load.php');
 
 // disable gzip if not available
-if($conf['compression'] == 'bz2' && !function_exists('bzopen')){
+define('DOKU_HAS_BZIP', function_exists('bzopen'));
+define('DOKU_HAS_GZIP', function_exists('gzopen'));
+if($conf['compression'] == 'bz2' && !DOKU_HAS_BZIP) {
     $conf['compression'] = 'gz';
 }
-if($conf['compression'] == 'gz' && !function_exists('gzopen')){
+if($conf['compression'] == 'gz' && !DOKU_HAS_GZIP) {
     $conf['compression'] = 0;
 }
 
@@ -224,6 +225,28 @@ if (!defined('NOSESSION')) {
 
 // setup mail system
 mail_setup();
+
+/**
+ * Initializes the session
+ *
+ * Makes sure the passed session cookie is valid, invalid ones are ignored an a new session ID is issued
+ *
+ * @link http://stackoverflow.com/a/33024310/172068
+ * @link http://php.net/manual/en/session.configuration.php#ini.session.sid-length
+ */
+function init_session() {
+    global $conf;
+    session_name(DOKU_SESSION_NAME);
+    session_set_cookie_params(DOKU_SESSION_LIFETIME, DOKU_SESSION_PATH, DOKU_SESSION_DOMAIN, ($conf['securecookie'] && is_ssl()), true);
+
+    // make sure the session cookie contains a valid session ID
+    if(isset($_COOKIE[DOKU_SESSION_NAME]) && !preg_match('/^[-,a-zA-Z0-9]{22,256}$/', $_COOKIE[DOKU_SESSION_NAME])) {
+        unset($_COOKIE[DOKU_SESSION_NAME]);
+    }
+
+    session_start();
+}
+
 
 /**
  * Checks paths from config file
@@ -309,24 +332,6 @@ function init_files(){
             }
         }
     }
-
-    # create title index (needs to have same length as page.idx)
-    /*
-    $file = $conf['indexdir'].'/title.idx';
-    if(!file_exists($file)){
-        $pages = file($conf['indexdir'].'/page.idx');
-        $pages = count($pages);
-        $fh = @fopen($file,'a');
-        if($fh){
-            for($i=0; $i<$pages; $i++){
-                fwrite($fh,"\n");
-            }
-            fclose($fh);
-        }else{
-            nice_die("$file is not writable. Check your permissions settings!");
-        }
-    }
-    */
 }
 
 /**
@@ -547,7 +552,7 @@ EOT;
  *
  * @author Andreas Gohr <andi@splitbrain.org>
  * @author <richpageau at yahoo dot co dot uk>
- * @link   http://de3.php.net/manual/en/function.realpath.php#75992
+ * @link   http://php.net/manual/en/function.realpath.php#75992
  */
 function fullpath($path,$exists=false){
     static $run = 0;

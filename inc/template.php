@@ -262,7 +262,8 @@ function tpl_admin() {
         if($INFO['prependTOC']) tpl_toc();
         $plugin->html();
     } else {
-        html_admin();
+        $admin = new dokuwiki\Ui\Admin();
+        $admin->show();
     }
     return true;
 }
@@ -303,10 +304,13 @@ function tpl_metaheaders($alt = true) {
 
     // the usual stuff
     $head['meta'][] = array('name'=> 'generator', 'content'=> 'DokuWiki');
-    $head['link'][] = array(
-        'rel' => 'search', 'type'=> 'application/opensearchdescription+xml',
-        'href'=> DOKU_BASE.'lib/exe/opensearch.php', 'title'=> $conf['title']
-    );
+    if(actionOK('search')) {
+        $head['link'][] = array(
+            'rel' => 'search', 'type'=> 'application/opensearchdescription+xml',
+            'href'=> DOKU_BASE.'lib/exe/opensearch.php', 'title'=> $conf['title']
+        );
+    }
+
     $head['link'][] = array('rel'=> 'start', 'href'=> DOKU_BASE);
     if(actionOK('index')) {
         $head['link'][] = array(
@@ -406,7 +410,15 @@ function tpl_metaheaders($alt = true) {
     $script .= 'var JSINFO = '.$json->encode($JSINFO).';';
     $head['script'][] = array('type'=> 'text/javascript', '_data'=> $script);
 
-    // load external javascript
+    // load jquery
+    $jquery = getCdnUrls();
+    foreach($jquery as $src) {
+        $head['script'][] = array(
+            'type' => 'text/javascript', 'charset' => 'utf-8', '_data' => '', 'src' => $src
+        );
+    }
+
+    // load our javascript dispatcher
     $head['script'][] = array(
         'type'=> 'text/javascript', 'charset'=> 'utf-8', '_data'=> '',
         'src' => DOKU_BASE.'lib/exe/js.php'.'?t='.rawurlencode($conf['template']).'&tseed='.$tseed
@@ -433,6 +445,9 @@ function tpl_metaheaders($alt = true) {
  */
 function _tpl_metaheaders_action($data) {
     foreach($data as $tag => $inst) {
+        if($tag == 'script') {
+            echo "<!--[if gte IE 9]><!-->\n"; // no scripts for old IE
+        }
         foreach($inst as $attr) {
             echo '<', $tag, ' ', buildAttributes($attr);
             if(isset($attr['_data']) || $tag == 'script') {
@@ -446,6 +461,9 @@ function _tpl_metaheaders_action($data) {
                 echo '/>';
             }
             echo "\n";
+        }
+        if($tag == 'script') {
+            echo "<!--<![endif]-->\n";
         }
     }
 }
@@ -992,9 +1010,9 @@ function tpl_pageinfo($ret = false) {
     $fn = $INFO['filepath'];
     if(!$conf['fullpath']) {
         if($INFO['rev']) {
-            $fn = str_replace(fullpath($conf['olddir']).'/', '', $fn);
+            $fn = str_replace($conf['olddir'].'/', '', $fn);
         } else {
-            $fn = str_replace(fullpath($conf['datadir']).'/', '', $fn);
+            $fn = str_replace($conf['datadir'].'/', '', $fn);
         }
     }
     $fn   = utf8_decodeFN($fn);
@@ -1221,8 +1239,8 @@ function tpl_img($maxwidth = 0, $maxheight = 0, $link = true, $params = null) {
     /** @var Input $INPUT */
     global $INPUT;
     global $REV;
-    $w = tpl_img_getTag('File.Width');
-    $h = tpl_img_getTag('File.Height');
+    $w = (int) tpl_img_getTag('File.Width');
+    $h = (int) tpl_img_getTag('File.Height');
 
     //resize to given max values
     $ratio = 1;
@@ -1433,7 +1451,7 @@ function tpl_localeFN($id) {
 }
 
 /**
- * prints the "main content" in the mediamanger popup
+ * prints the "main content" in the mediamanager popup
  *
  * Depending on the user's actions this may be a list of
  * files in a namespace, the meta editing dialog or
@@ -1600,7 +1618,7 @@ function tpl_mediaFileDetails($image, $rev) {
 }
 
 /**
- * prints the namespace tree in the mediamanger popup
+ * prints the namespace tree in the mediamanager popup
  *
  * Only allowed in mediamanager.php
  *
@@ -1709,22 +1727,26 @@ function tpl_license($img = 'badge', $imgonly = false, $return = false, $wrap = 
  * This function is useful to populate sidebars or similar features in a
  * template
  *
- * @param string $pageid
- * @param bool $print
- * @param bool $propagate
+ * @param string $pageid The page name you want to include
+ * @param bool $print Should the content be printed or returned only
+ * @param bool $propagate Search higher namespaces, too?
+ * @param bool $useacl Include the page only if the ACLs check out?
  * @return bool|null|string
  */
-function tpl_include_page($pageid, $print = true, $propagate = false) {
-    if (!$pageid) return false;
-    if ($propagate) $pageid = page_findnearest($pageid);
+function tpl_include_page($pageid, $print = true, $propagate = false, $useacl = true) {
+    if($propagate) {
+        $pageid = page_findnearest($pageid, $useacl);
+    } elseif($useacl && auth_quickaclcheck($pageid) == AUTH_NONE) {
+        return false;
+    }
+    if(!$pageid) return false;
 
     global $TOC;
     $oldtoc = $TOC;
     $html   = p_wiki_xhtml($pageid, '', false);
     $TOC    = $oldtoc;
 
-    if(!$print) return $html;
-    echo $html;
+    if($print) echo $html;
     return $html;
 }
 

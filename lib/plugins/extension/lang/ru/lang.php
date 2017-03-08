@@ -2,7 +2,7 @@
 
 /**
  * @license    GPL 2 (http://www.gnu.org/licenses/gpl.html)
- * 
+ *
  * @author Aleksandr Selivanov <alexgearbox@yandex.ru>
  * @author Igor Degraf <igordegraf@gmail.com>
  * @author Type-kun <workwork-1@yandex.ru>
@@ -34,7 +34,7 @@ $lang['js']['display_viewoptions'] = 'Показать как:';
 $lang['js']['display_enabled'] = 'включён';
 $lang['js']['display_disabled'] = 'отключён';
 $lang['js']['display_updatable'] = 'обновление';
-$lang['search_for']            = 'Поиск дополнения:';
+$lang['search_for']            = 'Поиск дополнения';
 $lang['search']                = 'Найти';
 $lang['extensionby']           = '<strong>%s</strong> %s';
 $lang['screenshot']            = 'Скриншот: %s';

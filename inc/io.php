@@ -107,9 +107,11 @@ function io_readFile($file,$clean=true){
     $ret = '';
     if(file_exists($file)){
         if(substr($file,-3) == '.gz'){
+            if(!DOKU_HAS_GZIP) return false;
             $ret = gzfile($file);
             if(is_array($ret)) $ret = join('', $ret);
         }else if(substr($file,-4) == '.bz2'){
+            if(!DOKU_HAS_BZIP) return false;
             $ret = bzfile($file);
         }else{
             $ret = file_get_contents($file);
@@ -200,7 +202,12 @@ function io_writeWikiPage($file, $content, $id, $rev=false) {
  */
 function _io_writeWikiPage_action($data) {
     if (is_array($data) && is_array($data[0]) && count($data[0])===3) {
-        return call_user_func_array('io_saveFile', $data[0]);
+        $ok = call_user_func_array('io_saveFile', $data[0]);
+        // for attic files make sure the file has the mtime of the revision
+        if($ok && is_int($data[3]) && $data[3] > 0) {
+            @touch($data[0][0], $data[3]);
+        }
+        return $ok;
     } else {
         return false; //callback error
     }
@@ -222,11 +229,13 @@ function _io_saveFile($file, $content, $append) {
     $fileexists = file_exists($file);
 
     if(substr($file,-3) == '.gz'){
+        if(!DOKU_HAS_GZIP) return false;
         $fh = @gzopen($file,$mode.'9');
         if(!$fh) return false;
         gzwrite($fh, $content);
         gzclose($fh);
     }else if(substr($file,-4) == '.bz2'){
+        if(!DOKU_HAS_BZIP) return false;
         if($append) {
             $bzcontent = bzfile($file);
             if($bzcontent === false) return false;
@@ -313,8 +322,10 @@ function io_replaceInFile($file, $oldline, $newline, $regex=false, $maxlines=0) 
 
     // load into array
     if(substr($file,-3) == '.gz'){
+        if(!DOKU_HAS_GZIP) return false;
         $lines = gzfile($file);
     }else if(substr($file,-4) == '.bz2'){
+        if(!DOKU_HAS_BZIP) return false;
         $lines = bzfile($file, true);
     }else{
         $lines = file($file);
@@ -483,7 +494,7 @@ function io_makeFileDir($file){
 /**
  * Creates a directory hierachy.
  *
- * @link    http://www.php.net/manual/en/function.mkdir.php
+ * @link    http://php.net/manual/en/function.mkdir.php
  * @author  <saint@corenova.com>
  * @author  Andreas Gohr <andi@splitbrain.org>
  *
@@ -770,3 +781,46 @@ function io_grep($file,$pattern,$max=0,$backref=false){
     return $matches;
 }
 
+
+/**
+ * Get size of contents of a file, for a compressed file the uncompressed size
+ * Warning: reading uncompressed size of content of bz-files requires uncompressing
+ *
+ * @author  Gerrit Uitslag <klapinklapin@gmail.com>
+ *
+ * @param string $file filename path to file
+ * @return int size of file
+ */
+function io_getSizeFile($file) {
+    if (!file_exists($file)) return 0;
+
+    if(substr($file,-3) == '.gz'){
+        $fp = @fopen($file, "rb");
+        if($fp === false) return 0;
+
+        fseek($fp, -4, SEEK_END);
+        $buffer = fread($fp, 4);
+        fclose($fp);
+        $array = unpack("V", $buffer);
+        $uncompressedsize = end($array);
+    }else if(substr($file,-4) == '.bz2'){
+        if(!DOKU_HAS_BZIP) return 0;
+
+        $bz = bzopen($file,"r");
+        if($bz === false) return 0;
+
+        $uncompressedsize = 0;
+        while (!feof($bz)) {
+            //8192 seems to be the maximum buffersize?
+            $buffer = bzread($bz,8192);
+            if(($buffer === false) || (bzerrno($bz) !== 0)) {
+                return 0;
+            }
+            $uncompressedsize += strlen($buffer);
+        }
+    }else{
+        $uncompressedsize = filesize($file);
+    }
+
+    return $uncompressedsize;
+ }

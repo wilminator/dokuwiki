@@ -36,19 +36,9 @@ function js_out(){
     $tpl = trim(preg_replace('/[^\w-]+/','',$INPUT->str('t')));
     if(!$tpl) $tpl = $conf['template'];
 
-    // The generated script depends on some dynamic options
-    $cache = new cache('scripts'.$_SERVER['HTTP_HOST'].$_SERVER['SERVER_PORT'].DOKU_BASE.$tpl,'.js');
-    $cache->_event = 'JS_CACHE_USE';
-
-    // load minified version for some files
-    $min = $conf['compress'] ? '.min' : '';
-
     // array of core files
     $files = array(
-                DOKU_INC."lib/scripts/jquery/jquery$min.js",
                 DOKU_INC.'lib/scripts/jquery/jquery.cookie.js',
-                DOKU_INC."lib/scripts/jquery/jquery-ui$min.js",
-                DOKU_INC."lib/scripts/jquery/jquery-migrate$min.js",
                 DOKU_INC.'inc/lang/'.$conf['lang'].'/jquery.ui.datepicker.js',
                 DOKU_INC."lib/scripts/fileuploader.js",
                 DOKU_INC."lib/scripts/fileuploaderextended.js",
@@ -80,6 +70,13 @@ function js_out(){
             $files[] = $userscript;
         }
     }
+
+    // Let plugins decide to either put more scripts here or to remove some
+    trigger_event('JS_SCRIPT_LIST', $files);
+
+    // The generated script depends on some dynamic options
+    $cache = new cache('scripts'.$_SERVER['HTTP_HOST'].$_SERVER['SERVER_PORT'].md5(serialize($files)),'.js');
+    $cache->_event = 'JS_CACHE_USE';
 
     $cache_files = array_merge($files, getConfigFiles('main'));
     $cache_files[] = __FILE__;
@@ -173,7 +170,7 @@ function js_load($file){
         // is it a include_once?
         if($match[1]){
             $base = utf8_basename($ifile);
-            if($loaded[$base]){
+            if(array_key_exists($base, $loaded) && $loaded[$base] === true){
                 $data  = str_replace($match[0], '' ,$data);
                 continue;
             }
@@ -219,18 +216,33 @@ function js_pluginscripts(){
  * @return array
  */
 function js_pluginstrings() {
-    global $conf;
+    global $conf, $config_cascade;
     $pluginstrings = array();
     $plugins = plugin_list();
-    foreach ($plugins as $p){
-        if (isset($lang)) unset($lang);
-        if (file_exists(DOKU_PLUGIN."$p/lang/en/lang.php")) {
-            include DOKU_PLUGIN."$p/lang/en/lang.php";
+    foreach($plugins as $p) {
+        $path = DOKU_PLUGIN . $p . '/lang/';
+
+        if(isset($lang)) unset($lang);
+        if(file_exists($path . "en/lang.php")) {
+            include $path . "en/lang.php";
         }
-        if (isset($conf['lang']) && $conf['lang']!='en' && file_exists(DOKU_PLUGIN."$p/lang/".$conf['lang']."/lang.php")) {
-            include DOKU_PLUGIN."$p/lang/".$conf['lang']."/lang.php";
+        foreach($config_cascade['lang']['plugin'] as $config_file) {
+            if(file_exists($config_file . $p . '/en/lang.php')) {
+                include($config_file . $p . '/en/lang.php');
+            }
         }
-        if (isset($lang['js'])) {
+        if(isset($conf['lang']) && $conf['lang'] != 'en') {
+            if(file_exists($path . $conf['lang'] . "/lang.php")) {
+                include($path . $conf['lang'] . '/lang.php');
+            }
+            foreach($config_cascade['lang']['plugin'] as $config_file) {
+                if(file_exists($config_file . $p . '/' . $conf['lang'] . '/lang.php')) {
+                    include($config_file . $p . '/' . $conf['lang'] . '/lang.php');
+                }
+            }
+        }
+
+        if(isset($lang['js'])) {
             $pluginstrings[$p] = $lang['js'];
         }
     }
@@ -247,15 +259,34 @@ function js_pluginstrings() {
  * @return array
  */
 function js_templatestrings($tpl) {
-    global $conf;
+    global $conf, $config_cascade;
+
+    $path = tpl_incdir() . 'lang/';
+
     $templatestrings = array();
-    if (file_exists(tpl_incdir($tpl)."lang/en/lang.php")) {
-        include tpl_incdir($tpl)."lang/en/lang.php";
+    if(file_exists($path . "en/lang.php")) {
+        include $path . "en/lang.php";
     }
-    if (isset($conf['lang']) && $conf['lang']!='en' && file_exists(tpl_incdir($tpl)."lang/".$conf['lang']."/lang.php")) {
-        include tpl_incdir($tpl)."lang/".$conf['lang']."/lang.php";
+    foreach($config_cascade['lang']['template'] as $config_file) {
+        if(file_exists($config_file . $conf['template'] . '/en/lang.php')) {
+            include($config_file . $conf['template'] . '/en/lang.php');
+        }
     }
-    if (isset($lang['js'])) {
+    if(isset($conf['lang']) && $conf['lang'] != 'en' && file_exists($path . $conf['lang'] . "/lang.php")) {
+        include $path . $conf['lang'] . "/lang.php";
+    }
+    if(isset($conf['lang']) && $conf['lang'] != 'en') {
+        if(file_exists($path . $conf['lang'] . "/lang.php")) {
+            include $path . $conf['lang'] . "/lang.php";
+        }
+        foreach($config_cascade['lang']['template'] as $config_file) {
+            if(file_exists($config_file . $conf['template'] . '/' . $conf['lang'] . '/lang.php')) {
+                include($config_file . $conf['template'] . '/' . $conf['lang'] . '/lang.php');
+            }
+        }
+    }
+
+    if(isset($lang['js'])) {
         $templatestrings[$tpl] = $lang['js'];
     }
     return $templatestrings;
@@ -419,9 +450,9 @@ function js_compress($s){
 
             // Only consider deleting whitespace if the signs before and after
             // are not equal and are not an operator which may not follow itself.
-            if ((!$lch || $s[$i+1] == ' ')
+            if ($i+1 < $slen && ((!$lch || $s[$i+1] == ' ')
                 || $lch != $s[$i+1]
-                || strpos($ops,$s[$i+1]) === false) {
+                || strpos($ops,$s[$i+1]) === false)) {
                 // leading spaces
                 if($i+1 < $slen && (strpos($chars,$s[$i+1]) !== false)){
                     $i = $i + 1;
